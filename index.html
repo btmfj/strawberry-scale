@@ -2,42 +2,56 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>イチゴ選別アシスタント</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>イチゴ選別アシスタント Pro</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: #fff; margin: 0; padding: 10px; }
-        #container { position: relative; display: inline-block; background: #000; width: 100%; max-width: 500px; }
-        video { width: 100%; border-radius: 8px; }
+        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: #fff; margin: 0; padding: 10px; overflow-x: hidden; }
+        #container { position: relative; display: inline-block; background: #000; width: 100%; max-width: 500px; margin-top: 10px; }
+        video { width: 100%; border-radius: 8px; display: block; }
+        
+        /* 画面中央のガイド枠 */
         #guide {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 280px; height: 100px; border: 3px solid #f00; pointer-events: none;
-            box-shadow: 0 0 0 1000px rgba(0,0,0,0.5);
+            width: 300px; height: 120px; border: 2px solid #00ff00; pointer-events: none;
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
         }
-        .controls { background: #333; padding: 15px; border-radius: 8px; margin: 10px auto; max-width: 500px; text-align: left; }
-        canvas { border: 1px solid #0f0; margin-top: 10px; width: 280px; height: 100px; image-rendering: pixelated; }
+        #guide::after {
+            content: "ここに数字を合わせる"; position: absolute; top: -25px; left: 0; 
+            color: #0f0; font-size: 12px; font-weight: bold;
+        }
+
+        .controls { background: #333; padding: 15px; border-radius: 12px; margin: 10px auto; max-width: 500px; text-align: left; box-sizing: border-box; }
         
-        /* 判定結果表示エリア */
-        #display-panel { display: flex; justify-content: space-around; align-items: center; margin: 10px 0; background: #222; padding: 15px; border-radius: 10px; border: 2px solid #444; }
+        /* 判定結果表示 */
+        #display-panel { 
+            display: flex; justify-content: space-around; align-items: center; 
+            margin: 0 auto 10px; background: #222; padding: 15px; 
+            border-radius: 12px; border: 2px solid #444; max-width: 500px; 
+        }
         .info-box { flex: 1; }
-        .label { font-size: 0.8rem; color: #aaa; }
-        #current-weight { font-size: 2.5rem; color: #0f0; font-family: monospace; }
-        #size-result { font-size: 4rem; color: #ff3b3b; font-weight: bold; }
+        .label { font-size: 0.7rem; color: #aaa; text-transform: uppercase; margin-bottom: 5px; }
+        #current-weight { font-size: 2.5rem; color: #0f0; font-family: 'Courier New', monospace; font-weight: bold; }
+        #size-result { font-size: 4rem; color: #ff3b3b; font-weight: bold; line-height: 1; }
         
-        input[type=range] { width: 100%; }
-        button { width: 100%; padding: 15px; font-size: 1.2rem; background: #28a745; color: white; border: none; border-radius: 8px; margin-top: 10px; }
+        canvas { border: 1px solid #444; margin-top: 10px; width: 300px; height: 120px; image-rendering: pixelated; background: #000; }
+        input[type=range] { width: 100%; margin: 10px 0; }
+        button { 
+            width: 100%; padding: 16px; font-size: 1.2rem; font-weight: bold;
+            background: #28a745; color: white; border: none; border-radius: 8px; 
+            margin-top: 5px; touch-action: manipulation;
+        }
+        .config-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
-    <h2>イチゴ重量判定くん</h2>
-
     <div id="display-panel">
         <div class="info-box">
-            <div class="label">現在の秤</div>
+            <div class="label">WEIGHT (g)</div>
             <div id="current-weight">0.0</div>
         </div>
         <div class="info-box">
-            <div class="label">サイズ</div>
+            <div class="label">SIZE</div>
             <div id="size-result">--</div>
         </div>
     </div>
@@ -49,13 +63,17 @@
 
     <div class="controls">
         <button onclick="setBaseWeight()">現在の重さを基準にする</button>
-        <hr>
-        <label>しきい値: <span id="thresh-val">128</span></label>
-        <input type="range" id="threshold" min="0" max="255" value="128">
-        <label><input type="checkbox" id="invert"> 白黒反転</label>
+        <div style="margin-top: 15px;">
+            <div class="config-row">
+                <label>しきい値: <span id="thresh-val">128</span></label>
+                <label><input type="checkbox" id="invert"> 白黒反転</label>
+            </div>
+            <input type="range" id="threshold" min="0" max="255" value="128">
+        </div>
     </div>
 
     <canvas id="canvas"></canvas>
+    <p style="font-size: 11px; color: #666;">※数字が枠内に正しく収まり、白く光っているか確認してください</p>
 
     <script>
         const video = document.getElementById('video');
@@ -65,87 +83,106 @@
         const threshInput = document.getElementById('threshold');
         const invertCheck = document.getElementById('invert');
 
-        // --- 設定・変数 ---
-        let lastStableWeight = 0; // 直前の安定した重量
-        let history = []; // 読み取り精度のための履歴
-        const HISTORY_LIMIT = 5; // 5フレーム連続で同じ数字なら「確定」とする
+        let lastStableWeight = null;
+        let history = []; 
+        const HISTORY_LIMIT = 4; // 判定の安定化（フレーム数）
 
-        // イチゴのサイズマトリクス（後ほど調整してください）
+        // サイズマトリクス（ここを適宜書き換えてください）
         const SIZE_MATRIX = [
-            { label: "2L", min: 20, max: 999 },
-            { label: "L",  min: 15, max: 19.9 },
-            { label: "M",  min: 10, max: 14.9 },
-            { label: "S",  min: 5,  max: 9.9 }
+            { label: "2L", min: 18, max: 999 },
+            { label: "L",  min: 13, max: 17.9 },
+            { label: "M",  min: 8,  max: 12.9 },
+            { label: "S",  min: 4,  max: 7.9 }
         ];
 
-        // カメラ起動
-        navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment', width: { ideal: 1280 } } 
-        }).then(s => video.srcObject = s);
-
-        // --- SSOCR ロジック ---
+        // 7セグメントのパターン定義
         const SEG_MAP = {
             "1110111": "0", "0010010": "1", "1011101": "2", "1011011": "3", "0111010": "4",
             "1101011": "5", "1101111": "6", "1110010": "7", "1111111": "8", "1111011": "9",
             "0000000": ""
         };
 
-        function recognizeDigit(pixels, x, y, w, h) {
-            const checkPoints = [
-                { px: 0.5, py: 0.1 },  // a
-                { px: 0.2, py: 0.3 },  // b
-                { px: 0.8, py: 0.3 },  // c
-                { px: 0.5, py: 0.5 },  // d
-                { px: 0.2, py: 0.7 },  // e
-                { px: 0.8, py: 0.7 },  // f
-                { px: 0.5, py: 0.9 }   // g
+        // カメラ設定
+        navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+        }).then(s => {
+            video.srcObject = s;
+        });
+
+        // 判定エリアの定義（面スキャン方式）
+        function recognizeDigit(pixels, x, y, w, h, ctx) {
+            const segments = [
+                { s: "a", x: 0.25, y: 0.05, w: 0.5,  h: 0.1 },  // 上
+                { s: "b", x: 0.05, y: 0.15, w: 0.15, h: 0.25 }, // 左上
+                { s: "c", x: 0.8,  y: 0.15, w: 0.15, h: 0.25 }, // 右上
+                { s: "d", x: 0.25, y: 0.45, w: 0.5,  h: 0.1 },  // 中央
+                { s: "e", x: 0.05, y: 0.6,  w: 0.15, h: 0.25 }, // 左下
+                { s: "f", x: 0.8,  y: 0.6,  w: 0.15, h: 0.25 }, // 右下
+                { s: "g", x: 0.25, y: 0.85, w: 0.5,  h: 0.1 }   // 下
             ];
+
             let bits = "";
-            checkPoints.forEach(p => {
-                const ix = Math.floor(x + w * p.px);
-                const iy = Math.floor(y + h * p.py);
-                const idx = (iy * canvas.width + ix) * 4;
-                bits += (pixels[idx] > 128) ? "1" : "0";
+            segments.forEach(seg => {
+                let whiteCount = 0;
+                const sx = Math.floor(x + w * seg.x);
+                const sy = Math.floor(y + h * seg.y);
+                const sw = Math.floor(w * seg.w);
+                const sh = Math.floor(h * seg.h);
+
+                for (let i = sy; i < sy + sh; i++) {
+                    for (let j = sx; j < sx + sw; j++) {
+                        const idx = (i * canvas.width + j) * 4;
+                        if (pixels[idx] > 128) whiteCount++;
+                    }
+                }
+                
+                // 面積の25%以上が白なら点灯とみなす
+                const isLit = (whiteCount / (sw * sh)) > 0.25;
+                bits += isLit ? "1" : "0";
+
+                // デバッグ用：セグメントの枠を表示
+                ctx.strokeStyle = isLit ? "rgba(255,255,0,0.8)" : "rgba(255,0,0,0.3)";
+                ctx.lineWidth = 1;
+                ctx.strokeRect(sx, sy, sw, sh);
             });
+
             return SEG_MAP[bits] || "";
         }
 
-        // 基準重量のリセット
         function setBaseWeight() {
             const current = parseFloat(weightDiv.innerText);
             if (!isNaN(current)) {
                 lastStableWeight = current;
-                sizeDiv.innerText = "SET";
-                speak("リセットしました");
+                sizeDiv.innerText = "READY";
+                speak("基準をセットしました");
             }
         }
 
-        // 音声読み上げ
         function speak(text) {
-            window.speechSynthesis.cancel(); // 前の音声を止める
+            window.speechSynthesis.cancel();
             const uttr = new SpeechSynthesisUtterance(text);
             uttr.lang = 'ja-JP';
-            uttr.rate = 1.2;
+            uttr.rate = 1.3;
             window.speechSynthesis.speak(uttr);
         }
 
-        // 重量変化からサイズを判定
         function checkWeightDiff(currentWeight) {
+            if (lastStableWeight === null) {
+                lastStableWeight = currentWeight;
+                return;
+            }
             const diff = lastStableWeight - currentWeight;
-            
-            // 5g以上減った場合にイチゴ1個分とみなす
-            if (diff >= 5) {
+            if (diff >= 4.0) { // 4g以上減ったら反応
                 const size = SIZE_MATRIX.find(s => diff >= s.min && diff <= s.max);
                 if (size) {
                     sizeDiv.innerText = size.label;
                     speak(size.label);
                 } else {
-                    sizeDiv.innerText = "??";
+                    sizeDiv.innerText = "外";
+                    speak("範囲外");
                 }
-                lastStableWeight = currentWeight; // 基準を更新
-            } 
-            // 逆に重くなった場合は、コンテナの入れ替え等と判断して基準を更新
-            else if (diff < -5) {
+                lastStableWeight = currentWeight;
+            } else if (diff < -10) { // 重さが大幅に増えたらリセット
                 lastStableWeight = currentWeight;
             }
         }
@@ -154,43 +191,48 @@
             if (video.paused || video.ended) return;
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
             
-            // ガイド枠内の映像をキャプチャ
+            // クロップ処理
+            canvas.width = 300; canvas.height = 120;
             const scale = video.videoWidth / video.clientWidth;
-            const sw = 280 * scale; const sh = 100 * scale;
-            const sx = (video.videoWidth - sw)/2; const sy = (video.videoHeight - sh)/2;
-            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 280, 100);
+            const sw = 300 * scale; const sh = 120 * scale;
+            const sx = (video.videoWidth - sw) / 2; const sy = (video.videoHeight - sh) / 2;
+            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 300, 120);
 
-            const imgData = ctx.getImageData(0, 0, 280, 100);
+            const imgData = ctx.getImageData(0, 0, 300, 120);
             const data = imgData.data;
             const thresh = parseInt(threshInput.value);
             const inv = invertCheck.checked;
 
-            // 二値化処理
+            // 二値化
             for (let i = 0; i < data.length; i += 4) {
-                const gray = (data[i] + data[i+1] + data[i+2])/3;
-                const v = (gray >= thresh) ^ inv ? 255 : 0;
+                const v = ((data[i] + data[i+1] + data[i+2]) / 3 >= thresh) ^ inv ? 255 : 0;
                 data[i] = data[i+1] = data[i+2] = v;
             }
             ctx.putImageData(imgData, 0, 0);
 
-            // 4桁読み取り
+            // 4つの数字エリアを解析
             let res = "";
-            for(let i=0; i<4; i++) {
-                res += recognizeDigit(data, i * 70 + 5, 10, 60, 80);
-                if(i === 2) res += "."; // 秤に合わせて小数点の位置は調整してください
+            const charW = 60; const charH = 100;
+            for(let i = 0; i < 4; i++) {
+                const charX = i * 75 + 5;
+                const digit = recognizeDigit(data, charX, 10, charW, charH, ctx);
+                res += digit;
+                if(i === 2) res += "."; 
             }
             
             const num = parseFloat(res);
-            if (!isNaN(num)) {
+            if (!isNaN(num) && res.length >= 3) {
                 weightDiv.innerText = num.toFixed(1);
-                
-                // 数値の安定化（HISTORY_LIMITフレーム連続で同じなら処理）
                 history.push(num);
                 if(history.length > HISTORY_LIMIT) history.shift();
                 
-                const allSame = history.every(v => Math.abs(v - num) < 0.2);
-                if(allSame && history.length === HISTORY_LIMIT) {
+                // 直近の履歴がすべて一致していれば確定
+                const isStable = history.every(v => Math.abs(v - num) < 0.1);
+                if(isStable && history.length === HISTORY_LIMIT) {
+                    weightDiv.style.color = "#0f0";
                     checkWeightDiff(num);
+                } else {
+                    weightDiv.style.color = "#555";
                 }
             }
 
