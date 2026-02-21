@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ選別アシスト</title>
+    <title>イチゴ選別アシスト V2</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; margin: 0; background: #f8f9fa; }
@@ -11,35 +11,38 @@
         .container { padding: 10px; }
         .results-section { background: white; margin: 15px; padding: 15px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         #result-display { font-size: 3.5rem; font-weight: bold; color: #d63031; margin: 5px 0; }
-        #status { font-size: 1rem; color: #636e72; min-height: 1.5rem; margin-bottom: 5px; }
+        #status { font-size: 0.9rem; color: #636e72; padding: 5px; }
         .controls { display: flex; flex-direction: column; gap: 10px; align-items: center; margin-top: 10px; }
         button { width: 85%; max-width: 300px; padding: 18px; font-size: 1.2rem; font-weight: bold; border-radius: 12px; border: none; cursor: pointer; }
-        .btn-start { background: #2ed573; color: white; }
-        .btn-main { background: #ff4757; color: white; box-shadow: 0 4px 0 #c0392b; }
-        .btn-main:active { transform: translateY(3px); box-shadow: none; }
+        .btn-start { background: #2ed573; color: white; border-bottom: 4px solid #21b65e; }
+        .btn-main { background: #ff4757; color: white; border-bottom: 4px solid #c0392b; }
         .btn-sub { background: #747d8c; color: white; font-size: 0.9rem; padding: 10px; }
+        #debug-log { font-size: 0.7rem; color: red; text-align: left; padding: 10px; display: none; }
         canvas { display: none; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h3>🍓 イチゴ重量選別</h3>
+    <h3 style="margin-bottom:5px;">🍓 イチゴ重量選別</h3>
     
-    <button id="start-btn" class="btn-start" onclick="startCamera()">1. カメラを起動する</button>
+    <div id="status">下のボタンを押して開始</div>
+    
+    <button id="start-btn" class="btn-start" onclick="initApp()">1. カメラを起動する</button>
 
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
 
-    <div class="results-section">
-        <div id="status">カメラを起動してください</div>
-        <div id="result-display">-- g</div>
-        <div id="diff-text" style="font-size: 1.2rem; color: #2d3436; font-weight: bold;">(サイズ判定)</div>
-    </div>
+    <div id="debug-log"></div>
 
     <div id="app-controls" class="controls" style="display:none;">
+        <div class="results-section">
+            <div id="result-display">-- g</div>
+            <div id="diff-text" style="font-size: 1.2rem; color: #2d3436; font-weight: bold;">(サイズ)</div>
+        </div>
         <button class="btn-main" onclick="recognizeWeight()">2. 重さを確定して判定</button>
-        <button class="btn-sub" onclick="resetBaseWeight()">総重量をリセット(開始時)</button>
+        <button class="btn-sub" onclick="resetBaseWeight()">総重量をリセット</button>
+        <button class="btn-sub" style="background:#aaa" onclick="location.reload()">カメラ再起動</button>
     </div>
 </div>
 
@@ -48,95 +51,49 @@
     const canvas = document.getElementById('canvas');
     const status = document.getElementById('status');
     const resultDisplay = document.getElementById('result-display');
-    const diffText = document.getElementById('diff-text');
     const startBtn = document.getElementById('start-btn');
     const appControls = document.getElementById('app-controls');
+    const debugLog = document.getElementById('debug-log');
 
     let lastWeight = 0;
 
-    // --- 1. カメラ起動 ---
-    async function startCamera() {
+    function log(msg) {
+        debugLog.style.display = "block";
+        debugLog.innerHTML += `<div>> ${msg}</div>`;
+    }
+
+    async function initApp() {
+        log("カメラ起動を試行中...");
+        
+        // 前回のストリームが残っていたら停止させる
+        if (video.srcObject) {
+            video.srcObject.getTracks().forEach(track => track.stop());
+        }
+
+        const constraints = { 
+            video: { 
+                facingMode: "environment", // 背面カメラ
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }, 
+            audio: false 
+        };
+
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" }, 
-                audio: false 
-            });
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             video.srcObject = stream;
+            
+            // iOS向けの対策: playsinlineとmutedをセットして確実に再生
+            video.setAttribute("playsinline", true);
+            video.setAttribute("muted", true);
+            
+            // 明示的にplayを呼ぶ
             await video.play();
-            status.innerText = "秤を枠内に映してください";
+            
+            status.innerText = "カメラ起動成功！秤を映してください";
             startBtn.style.display = "none";
             appControls.style.display = "flex";
+            log("カメラ接続完了");
         } catch (err) {
-            alert("カメラの起動に失敗しました。設定を確認してください。");
-        }
-    }
-
-    // --- 2. OCR実行 (画像から数字を読み取る) ---
-    async function runOCR() {
-        const context = canvas.getContext('2d');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        // Tesseract.jsで解析
-        const result = await Tesseract.recognize(canvas, 'eng');
-        const text = result.data.text;
-        // 数字と小数点のみ抽出
-        const weight = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(weight) ? null : weight;
-    }
-
-    // --- 3. リセット (コンテナを置いた直後) ---
-    async function resetBaseWeight() {
-        status.innerText = "初期重量を読み取り中...";
-        const weight = await runOCR();
-        if (weight !== null) {
-            lastWeight = weight;
-            resultDisplay.innerText = weight + "g";
-            status.innerText = "リセット完了。イチゴを取ってください。";
-            speak(`リセット完了。${weight}グラムから開始します。`);
-        } else {
-            status.innerText = "数字が読めませんでした";
-        }
-    }
-
-    // --- 4. メイン判定 (イチゴを取った後) ---
-    async function recognizeWeight() {
-        status.innerText = "解析中...";
-        const currentWeight = await runOCR();
-        
-        if (currentWeight !== null) {
-            const diff = lastWeight - currentWeight;
-            
-            // 判定ロジック (重さに合わせて調整してください)
-            let size = "";
-            if (diff >= 20) size = "2L";
-            else if (diff >= 15) size = "L";
-            else if (diff >= 10) size = "M";
-            else if (diff >= 5) size = "S";
-            else size = "判定不能";
-
-            // 表示更新
-            resultDisplay.innerText = diff.toFixed(1) + "g";
-            diffText.innerText = size + "サイズ";
-            status.innerText = `現在の総重量: ${currentWeight}g`;
-            
-            // 次の計算のために基準値を更新
-            lastWeight = currentWeight;
-
-            // 音声読み上げ
-            speak(size === "判定不能" ? "もう一度" : size + "サイズ");
-        } else {
-            status.innerText = "数字を読み取れませんでした";
-        }
-    }
-
-    // --- 5. 音声読み上げ ---
-    function speak(text) {
-        const uttr = new SpeechSynthesisUtterance(text);
-        uttr.lang = "ja-JP";
-        window.speechSynthesis.speak(uttr);
-    }
-</script>
-</body>
-</html>
+            log(`エラー: ${err.name} - ${err.message}`);
+            if (err.name === 'NotAllowedError')
