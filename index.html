@@ -2,98 +2,143 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ選別アシスト V2</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>イチゴ重量選別 V1.01</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; text-align: center; margin: 0; background: #f8f9fa; }
-        #video { width: 90%; max-width: 400px; border: 3px solid #333; border-radius: 12px; margin-top: 15px; background: #000; }
-        .container { padding: 10px; }
-        .results-section { background: white; margin: 15px; padding: 15px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        #result-display { font-size: 3.5rem; font-weight: bold; color: #d63031; margin: 5px 0; }
-        #status { font-size: 0.9rem; color: #636e72; padding: 5px; }
-        .controls { display: flex; flex-direction: column; gap: 10px; align-items: center; margin-top: 10px; }
-        button { width: 85%; max-width: 300px; padding: 18px; font-size: 1.2rem; font-weight: bold; border-radius: 12px; border: none; cursor: pointer; }
-        .btn-start { background: #2ed573; color: white; border-bottom: 4px solid #21b65e; }
-        .btn-main { background: #ff4757; color: white; border-bottom: 4px solid #c0392b; }
-        .btn-sub { background: #747d8c; color: white; font-size: 0.9rem; padding: 10px; }
-        #debug-log { font-size: 0.7rem; color: red; text-align: left; padding: 10px; display: none; }
-        canvas { display: none; }
+        body { font-family: sans-serif; text-align: center; background: #f0f0f0; margin: 0; padding: 20px; }
+        #video { width: 100%; max-width: 400px; background: #000; border-radius: 10px; margin-top: 10px; }
+        .info-panel { background: white; border-radius: 15px; padding: 15px; margin: 15px 0; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        #result-display { font-size: 3rem; font-weight: bold; color: #ff4757; }
+        .btn { padding: 18px; font-size: 1.2rem; border-radius: 12px; border: none; color: white; margin: 10px; width: 85%; font-weight: bold; }
+        .btn-green { background: #2ed573; }
+        .btn-red { background: #ff4757; }
+        .btn-gray { background: #747d8c; font-size: 0.9rem; }
+        #log { font-size: 0.7rem; color: #666; text-align: left; background: #eee; padding: 10px; border-radius: 5px; margin-top: 20px; height: 60px; overflow-y: scroll; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h3 style="margin-bottom:5px;">🍓 イチゴ重量選別</h3>
+    <h3>🍓 イチゴ重量選別 V1.01</h3>
     
-    <div id="status">下のボタンを押して開始</div>
+    <div id="status">1. まずカメラを起動してください</div>
     
-    <button id="start-btn" class="btn-start" onclick="initApp()">1. カメラを起動する</button>
+    <button id="start-btn" class="btn btn-green" onclick="startCamera()">カメラを起動する</button>
 
     <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
+    <canvas id="canvas" style="display:none;"></canvas>
 
-    <div id="debug-log"></div>
-
-    <div id="app-controls" class="controls" style="display:none;">
-        <div class="results-section">
+    <div id="controls" style="display:none;">
+        <div class="info-panel">
             <div id="result-display">-- g</div>
-            <div id="diff-text" style="font-size: 1.2rem; color: #2d3436; font-weight: bold;">(サイズ)</div>
+            <div id="size-label" style="font-size: 1.5rem;">(サイズ判定)</div>
         </div>
-        <button class="btn-main" onclick="recognizeWeight()">2. 重さを確定して判定</button>
-        <button class="btn-sub" onclick="resetBaseWeight()">総重量をリセット</button>
-        <button class="btn-sub" style="background:#aaa" onclick="location.reload()">カメラ再起動</button>
+        <button class="btn btn-red" onclick="recognizeWeight()">重さを判定</button>
+        <button class="btn btn-gray" onclick="resetWeight()">初期重量リセット</button>
     </div>
-</div>
 
-<script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const status = document.getElementById('status');
-    const resultDisplay = document.getElementById('result-display');
-    const startBtn = document.getElementById('start-btn');
-    const appControls = document.getElementById('app-controls');
-    const debugLog = document.getElementById('debug-log');
+    <div id="log">ログメッセージ表示</div>
 
-    let lastWeight = 0;
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const logArea = document.getElementById('log');
+        const statusText = document.getElementById('status');
+        let lastTotalWeight = 0;
 
-    function log(msg) {
-        debugLog.style.display = "block";
-        debugLog.innerHTML += `<div>> ${msg}</div>`;
-    }
-
-    async function initApp() {
-        log("カメラ起動を試行中...");
-        
-        // 前回のストリームが残っていたら停止させる
-        if (video.srcObject) {
-            video.srcObject.getTracks().forEach(track => track.stop());
+        function addLog(msg) {
+            const now = new Date();
+            const time = now.getHours() + ":" + now.getMinutes() + ":" + now.getSeconds();
+            logArea.innerHTML = `[${time}] ${msg}<br>` + logArea.innerHTML;
         }
 
-        const constraints = { 
-            video: { 
-                facingMode: "environment", // 背面カメラ
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            }, 
-            audio: false 
-        };
+        // --- カメラ起動（デバッグ版の成功パターンを採用） ---
+        async function startCamera() {
+            addLog("カメラ起動を試行中...");
+            const constraints = {
+                video: { facingMode: "environment" },
+                audio: false
+            };
 
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            video.srcObject = stream;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                // iOS対策：明示的にplayを待つ
+                await video.play();
+                
+                statusText.innerText = "カメラ起動成功！";
+                document.getElementById('start-btn').style.display = "none";
+                document.getElementById('controls').style.display = "block";
+                addLog("ビデオストリーム取得完了");
+            } catch (err) {
+                addLog("カメラエラー: " + err.name);
+                alert("カメラを起動できません。ブラウザの設定で許可してください。");
+            }
+        }
+
+        // --- OCR処理 ---
+        async function runOCR() {
+            addLog("解析開始...");
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            try {
+                const result = await Tesseract.recognize(canvas, 'eng');
+                const text = result.data.text;
+                addLog("読み取り結果: " + text);
+                const weight = parseFloat(text.replace(/[^0-9.]/g, ''));
+                return isNaN(weight) ? null : weight;
+            } catch (e) {
+                addLog("OCRエラー: " + e);
+                return null;
+            }
+        }
+
+        // --- 初期リセット ---
+        async function resetWeight() {
+            const w = await runOCR();
+            if (w !== null) {
+                lastTotalWeight = w;
+                addLog(`基準重量を ${w}g に設定しました`);
+                speak("リセットしました");
+            } else {
+                alert("数字が読み取れません");
+            }
+        }
+
+        // --- 重量判定 ---
+        async function recognizeWeight() {
+            statusText.innerText = "読み取り中...";
+            const currentWeight = await runOCR();
             
-            // iOS向けの対策: playsinlineとmutedをセットして確実に再生
-            video.setAttribute("playsinline", true);
-            video.setAttribute("muted", true);
-            
-            // 明示的にplayを呼ぶ
-            await video.play();
-            
-            status.innerText = "カメラ起動成功！秤を映してください";
-            startBtn.style.display = "none";
-            appControls.style.display = "flex";
-            log("カメラ接続完了");
-        } catch (err) {
-            log(`エラー: ${err.name} - ${err.message}`);
-            if (err.name === 'NotAllowedError')
+            if (currentWeight !== null) {
+                const diff = lastTotalWeight - currentWeight;
+                let size = "";
+                if (diff >= 20) size = "2L";
+                else if (diff >= 15) size = "L";
+                else if (diff >= 10) size = "M";
+                else if (diff >= 5) size = "S";
+                else size = "判定不能";
+
+                document.getElementById('result-display').innerText = diff.toFixed(1) + "g";
+                document.getElementById('size-label').innerText = size + "サイズ";
+                statusText.innerText = `現在の総重量: ${currentWeight}g`;
+                
+                lastTotalWeight = currentWeight;
+                speak(size + "サイズ");
+            } else {
+                statusText.innerText = "読み取り失敗。もう一度。";
+            }
+        }
+
+        // --- 音声 ---
+        function speak(text) {
+            const uttr = new SpeechSynthesisUtterance(text);
+            uttr.lang = "ja-JP";
+            window.speechSynthesis.speak(uttr);
+        }
+    </script>
+</body>
+</html>
