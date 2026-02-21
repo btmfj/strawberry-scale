@@ -3,30 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ重量選別 V1.04</title>
+    <title>イチゴ重量選別 V1.05</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #222; color: white; margin: 0; overflow: hidden; }
-        .camera-container { position: relative; width: 100vw; height: 50vh; background: #000; }
+        .camera-container { position: relative; width: 100vw; height: 45vh; background: #000; }
         #video { width: 100%; height: 100%; object-fit: cover; }
         .guide-box {
             position: absolute; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 280px; height: 100px;
-            border: 4px solid #00ff00; border-radius: 8px;
-            box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
+            width: 80%; height: 60px;
+            border: 2px solid #00ff00;
             z-index: 10;
         }
         #debug-canvas {
-            position: absolute; bottom: 5px; right: 5px;
-            width: 150px; border: 2px solid #00ff00; z-index: 20;
-            background: #fff;
+            position: absolute; top: 5px; right: 5px;
+            width: 120px; height: auto; border: 1px solid white; z-index: 20;
+            background: #000;
         }
-        .ui-panel { height: 50vh; background: #fff; color: #333; padding: 15px; border-radius: 20px 20px 0 0; position: relative; z-index: 30; }
-        #result-display { font-size: 4rem; font-weight: bold; color: #ff4757; margin: 0; }
-        .btn { padding: 20px; font-size: 1.4rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 10px 0; }
-        .btn-red { background: #ff4757; box-shadow: 0 4px #c0392b; }
-        .btn-gray { background: #747d8c; font-size: 1rem; padding: 12px; }
+        .ui-panel { height: 55vh; background: #fff; color: #333; padding: 10px; border-radius: 20px 20px 0 0; position: relative; z-index: 30; }
+        #result-display { font-size: 3.5rem; font-weight: bold; color: #ff4757; margin: 0; }
+        .btn { padding: 15px; font-size: 1.2rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 5px 0; }
+        .btn-red { background: #ff4757; }
+        .btn-gray { background: #747d8c; font-size: 0.9rem; }
     </style>
 </head>
 <body>
@@ -39,11 +38,11 @@
 
     <div class="ui-panel">
         <p id="result-display">-- g</p>
-        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.04 待機中</div>
+        <div id="size-label" style="font-size: 1.2rem; font-weight: bold;">V1.05 デバッグ中</div>
         
         <button class="btn btn-red" onclick="recognizeWeight()">重さを判定</button>
         <button class="btn btn-gray" onclick="resetWeight()">初期重量リセット</button>
-        <div id="log" style="font-size: 0.8rem; color: #888; margin-top: 5px;">ログ: 窓を確認してください</div>
+        <div id="log" style="font-size: 0.7rem; color: #888; margin-top: 5px; background: #eee; padding: 5px;">ログを表示</div>
     </div>
 
     <canvas id="process-canvas" style="display:none;"></canvas>
@@ -62,49 +61,30 @@
             logArea.innerText = "読取中...";
             const ctx = processCanvas.getContext('2d');
             
-            const scale = video.videoWidth / video.clientWidth;
-            const w = 280 * scale;
-            const h = 100 * scale;
-            const x = (video.videoWidth - w) / 2;
-            const y = (video.videoHeight - h) / 2;
+            // 切り出しを行わず、一旦ビデオ全体をキャンバスへ（ズレ防止）
+            processCanvas.width = video.videoWidth;
+            processCanvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
 
-            processCanvas.width = w;
-            processCanvas.height = h;
-            ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
-
-            // --- 画像処理の変更 (V1.04) ---
-            let imageData = ctx.getImageData(0, 0, w, h);
-            let data = imageData.data;
-            
-            // 輝度情報の取得
-            for (let i = 0; i < data.length; i += 4) {
-                let gray = data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
-                
-                // コントラストを極端に上げる (明るいところはより白く、暗いところはより黒く)
-                // 128を境に広げる
-                let v = (gray - 128) * 3 + 128; 
-                if (v > 255) v = 255;
-                if (v < 0) v = 0;
-                
-                data[i] = data[i+1] = data[i+2] = v;
-            }
-            ctx.putImageData(imageData, 0, 0);
-
-            // デバッグ表示
-            debugCanvas.width = w;
-            debugCanvas.height = h;
-            debugCanvas.getContext('2d').putImageData(imageData, 0, 0);
+            // デバッグ窓にも同じものを映す
+            const dCtx = debugCanvas.getContext('2d');
+            debugCanvas.width = 120;
+            debugCanvas.height = (video.videoHeight / video.videoWidth) * 120;
+            dCtx.drawImage(processCanvas, 0, 0, debugCanvas.width, debugCanvas.height);
 
             try {
                 const result = await Tesseract.recognize(processCanvas, 'eng', {
                     tessedit_char_whitelist: '0123456789.',
-                    tessedit_pageseg_mode: '7'
+                    tessedit_pageseg_mode: '6' // 単一のテキストブロック
                 });
                 
                 let text = result.data.text.replace(/[^0-9.]/g, '');
-                logArea.innerText = "結果: " + text;
+                logArea.innerText = "解析文字: " + text;
                 return text ? parseFloat(text) : null;
-            } catch (e) { return null; }
+            } catch (e) { 
+                logArea.innerText = "エラー: " + e;
+                return null; 
+            }
         }
 
         async function resetWeight() {
@@ -112,7 +92,7 @@
             if (w !== null) {
                 lastTotalWeight = w;
                 document.getElementById('size-label').innerText = `基準: ${w}g`;
-                speak("リセット");
+                speak("セットしました");
             }
         }
 
@@ -125,6 +105,8 @@
                 document.getElementById('size-label').innerText = size + "サイズ";
                 lastTotalWeight = currentWeight;
                 speak(size);
+            } else {
+                logArea.innerText = "数字が見つかりませんでした";
             }
         }
 
