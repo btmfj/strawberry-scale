@@ -3,31 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>7Seg Digital OCR - Final</title>
+    <title>Digital Scale Reader</title>
     <script src="https://unpkg.com/tesseract.js@v4.1.0/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: 'Courier New', Courier, monospace; text-align: center; background: #1a1a1a; color: #00ff00; margin: 0; padding: 20px; }
-        #container { position: relative; display: inline-block; background: #000; border: 2px solid #333; }
-        video { width: 100%; max-width: 500px; height: auto; }
+        body { font-family: sans-serif; text-align: center; background: #121212; color: #ffffff; margin: 0; padding: 20px; }
+        #container { position: relative; display: inline-block; background: #000; border-radius: 12px; overflow: hidden; }
+        video { width: 100%; max-width: 640px; height: auto; display: block; }
         #guide {
             position: absolute; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 260px; height: 100px;
-            border: 2px solid #ff0000; box-shadow: 0 0 15px rgba(255,0,0,0.7);
+            width: 280px; height: 120px;
+            border: 3px solid #00ff00; box-shadow: 0 0 20px rgba(0,255,0,0.6);
             pointer-events: none;
         }
-        .controls { background: #333; padding: 15px; border-radius: 8px; margin: 15px auto; max-width: 500px; text-align: left; color: white; }
+        .controls { background: #222; padding: 20px; border-radius: 12px; margin: 15px auto; max-width: 500px; text-align: left; }
         .control-group { margin-bottom: 15px; }
-        canvas { border: 2px solid #00ff00; background: #000; margin-top: 10px; width: 260px; height: 100px; }
-        #result-label { font-size: 0.9rem; color: #aaa; margin-top: 20px; }
-        #result { font-size: 3.5rem; font-weight: bold; color: #00ff00; margin: 5px 0; min-height: 4rem; }
-        button { background: #28a745; color: white; border: none; padding: 15px; border-radius: 5px; cursor: pointer; font-size: 1.2rem; width: 100%; font-weight: bold; }
-        input[type=range] { width: 100%; }
+        label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: #ccc; }
+        input[type=range] { width: 100%; cursor: pointer; }
+        canvas { border: 2px solid #00ff00; background: #000; margin-top: 15px; width: 280px; height: 120px; }
+        #result-area { margin-top: 20px; padding: 10px; background: #000; border-radius: 8px; }
+        #result { font-size: 4rem; font-weight: bold; color: #00ff00; font-family: 'Courier New', Courier, monospace; }
+        button { background: #007bff; color: white; border: none; padding: 15px; border-radius: 8px; cursor: pointer; font-size: 1.2rem; width: 100%; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #555; }
     </style>
 </head>
 <body>
 
-    <h2>Digital Scale OCR</h2>
+    <h2>秤デジタル数字 読み取り</h2>
     
     <div id="container">
         <video id="video" autoplay playsinline></video>
@@ -40,14 +43,17 @@
             <input type="range" id="threshold" min="0" max="255" value="128">
         </div>
         <div class="control-group">
-            <label><input type="checkbox" id="invert"> 白黒反転 (Invert)</label>
+            <label><input type="checkbox" id="invert"> 白黒反転（背景が黒い場合はON）</label>
         </div>
-        <button id="capture-btn">READ SCALE</button>
+        <button id="capture-btn">数字を読み取る</button>
     </div>
 
+    <p>解析用プレビュー:</p>
     <canvas id="canvas"></canvas>
-    <div id="result-label">READING RESULT:</div>
-    <div id="result">---</div>
+
+    <div id="result-area">
+        <div id="result">---</div>
+    </div>
 
     <script>
         const video = document.getElementById('video');
@@ -58,23 +64,26 @@
         const threshVal = document.getElementById('thresh-val');
         const invertCheck = document.getElementById('invert');
 
+        // カメラ設定
         navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: 'environment', width: { ideal: 1280 } } 
         }).then(stream => { video.srcObject = stream; });
 
+        // リアルタイム二値化プレビュー
         function processFrame() {
             if (video.paused || video.ended) return;
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
             const scale = video.videoWidth / video.clientWidth;
             
-            const w = 260 * scale;
-            const h = 100 * scale;
+            // ガイド枠に合わせて切り出し
+            const w = 280 * scale;
+            const h = 120 * scale;
             const x = (video.videoWidth - w) / 2;
             const y = (video.videoHeight - h) / 2;
 
-            canvas.width = 260;
-            canvas.height = 100;
-            ctx.drawImage(video, x, y, w, h, 0, 0, 260, 100);
+            canvas.width = 280;
+            canvas.height = 120;
+            ctx.drawImage(video, x, y, w, h, 0, 0, 280, 120);
 
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const data = imageData.data;
@@ -93,33 +102,39 @@
         video.addEventListener('play', processFrame);
         threshInput.addEventListener('input', () => { threshVal.innerText = threshInput.value; });
 
-        // OCRエンジンの初期化（一度だけ行う）
+        // Tesseract初期化
         let worker = null;
-        async function getWorker() {
-            if (worker) return worker;
-            worker = await Tesseract.createWorker();
-            await worker.loadLanguage('eng');
-            await worker.initialize('eng');
-            // 数字とドットのみを認識するように設定
-            await worker.setParameters({
-                tessedit_char_whitelist: '0123456789.',
-                tessedit_pageseg_mode: '6', // Single uniform block of text
-            });
+        async function initWorker() {
+            if (!worker) {
+                worker = await Tesseract.createWorker();
+                await worker.loadLanguage('eng');
+                await worker.initialize('eng');
+                // 数字と小数点のみ、単一ブロック認識
+                await worker.setParameters({
+                    tessedit_char_whitelist: '0123456789.',
+                    tessedit_pageseg_mode: '7', 
+                });
+            }
             return worker;
         }
 
+        // 読み取り実行
         captureBtn.addEventListener('click', async () => {
-            resultDiv.innerText = "SCANNING...";
+            captureBtn.disabled = true;
+            resultDiv.innerText = "...";
+            
             try {
-                const currentWorker = await getWorker();
+                const currentWorker = await initWorker();
                 const { data: { text } } = await currentWorker.recognize(canvas);
                 
-                // 余計な改行やスペースを除去し、Vを付加
-                const cleanText = text.replace(/[^0-9.]/g, '');
-                resultDiv.innerText = cleanText ? `V ${cleanText}` : "RETRY";
+                // 数字とドット以外を完全に排除
+                const cleanText = text.replace(/[^0-9.]/g, '').trim();
+                resultDiv.innerText = cleanText || "Error";
             } catch (e) {
-                resultDiv.innerText = "ERROR";
+                resultDiv.innerText = "Err";
                 console.error(e);
+            } finally {
+                captureBtn.disabled = false;
             }
         });
     </script>
