@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ選別 V1.09</title>
+    <title>イチゴ選別 V1.10</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #000; color: white; margin: 0; overflow: hidden; }
@@ -14,6 +14,7 @@
         .btn { padding: 20px; font-size: 1.4rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 8px 0; }
         .btn-red { background: #ff4757; box-shadow: 0 4px #c0392b; }
         .btn-gray { background: #747d8c; font-size: 1rem; padding: 12px; }
+        .btn-light { background: #f1c40f; color: #333; font-size: 0.9rem; padding: 8px; width: 40%; }
         #log { font-size: 0.8rem; color: #57606f; min-height: 1.2rem; background: #f1f2f6; border-radius: 5px; }
     </style>
 </head>
@@ -22,12 +23,13 @@
     <video id="video" autoplay playsinline muted></video>
     
     <div class="ui-panel">
-        <div style="font-size:0.7rem; color:#888;">スキャン画像（白背景に黒い数字を目指す）</div>
+        <button id="torch-btn" class="btn-light" onclick="toggleTorch()">🔦 ライトON/OFF</button>
+        <div style="font-size:0.7rem; color:#888;">スキャン画像（白背景に黒い数字）</div>
         <canvas id="debug-canvas"></canvas>
         <div id="log">ログ: 待機中</div>
 
         <p id="result-display">-- g</p>
-        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.09</div>
+        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.10</div>
         
         <button class="btn btn-red" onclick="recognizeWeight()">重さを判定</button>
         <button class="btn btn-gray" onclick="resetWeight()">初期重量リセット</button>
@@ -41,9 +43,30 @@
         const debugCanvas = document.getElementById('debug-canvas');
         const logArea = document.getElementById('log');
         let lastTotalWeight = 0;
+        let videoTrack = null;
+        let torchStatus = false;
 
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-            .then(stream => { video.srcObject = stream; })
+        // カメラ起動
+        navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment" } 
+        }).then(stream => { 
+            video.srcObject = stream;
+            videoTrack = stream.getVideoTracks()[0];
+        });
+
+        // --- ライトのオン/オフ切り替え ---
+        async function toggleTorch() {
+            if (!videoTrack) return;
+            torchStatus = !torchStatus;
+            try {
+                await videoTrack.applyConstraints({
+                    advanced: [{ torch: torchStatus }]
+                });
+            } catch (err) {
+                console.error("ライト制御に失敗しました:", err);
+                alert("このブラウザ・機種ではライト制御がサポートされていない可能性があります。");
+            }
+        }
 
         async function runOCR() {
             const ctx = processCanvas.getContext('2d', { willReadFrequently: true });
@@ -61,7 +84,6 @@
             let imageData = ctx.getImageData(0, 0, cw, ch);
             let data = imageData.data;
 
-            // 1. 輝度の最大値と最小値を求める
             let min = 255;
             let max = 0;
             for (let i = 0; i < data.length; i += 4) {
@@ -70,13 +92,10 @@
                 if (gray > max) max = gray;
             }
 
-            // 2. コントラストを動的に引き伸ばす (背景を白、数字を黒へ)
             for (let i = 0; i < data.length; i += 4) {
                 let gray = (data[i] + data[i+1] + data[i+2]) / 3;
-                // min-maxの範囲を0-255に拡大
                 let v = ((gray - min) / (max - min)) * 255;
-                // さらに極端に二値化 (白と黒をハッキリさせる)
-                v = v < 100 ? 0 : 255; 
+                v = v < 110 ? 0 : 255; // 閾値を微調整
                 data[i] = data[i+1] = data[i+2] = v;
             }
             ctx.putImageData(imageData, 0, 0);
