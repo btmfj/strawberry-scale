@@ -1,0 +1,24 @@
+// 1. カメラ映像を取得する
+const video = document.getElementById('video');
+navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+  .then(stream => { video.srcObject = stream; });
+
+// 2. ボタンを押した時に画像を解析（OCR）
+async function recognizeWeight() {
+  const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
+  const weight = parseFloat(text.replace(/[^0-9.]/g, '')); // 数字だけ抽出
+  calculateSize(weight);
+}
+
+// 3. サイズ判定と読み上げ
+function calculateSize(currentWeight) {
+  const diff = lastWeight - currentWeight; // 減った分を計算
+  let size = "";
+  if (diff >= 20) size = "2L";
+  else if (diff >= 15) size = "L";
+  else size = "M";
+
+  // 音声で読み上げ
+  const uttr = new SpeechSynthesisUtterance(`${size}サイズです`);
+  window.speechSynthesis.speak(uttr);
+}
