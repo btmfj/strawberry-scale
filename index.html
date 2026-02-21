@@ -1,24 +1,92 @@
-// 1. カメラ映像を取得する
-const video = document.getElementById('video');
-navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-  .then(stream => { video.srcObject = stream; });
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>イチゴ重量選別</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin: 0; background: #fafafa; }
+        #video { width: 90%; max-width: 400px; border: 4px solid #333; border-radius: 8px; margin-top: 10px; }
+        .controls { margin: 20px; }
+        button { padding: 15px 25px; font-size: 18px; border-radius: 10px; border: none; background: #e84118; color: white; font-weight: bold; }
+        #status { font-size: 1.2rem; color: #666; margin: 10px; }
+        #result-display { font-size: 3rem; font-weight: bold; color: #c23616; margin: 20px; }
+        canvas { display: none; } /* 処理用なので隠す */
+    </style>
+</head>
+<body>
 
-// 2. ボタンを押した時に画像を解析（OCR）
-async function recognizeWeight() {
-  const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
-  const weight = parseFloat(text.replace(/[^0-9.]/g, '')); // 数字だけ抽出
-  calculateSize(weight);
-}
+    <h2>🍓 イチゴ重量選別</h2>
+    
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas> <div id="status">秤をカメラに映してください</div>
+    <div id="result-display">-- g</div>
 
-// 3. サイズ判定と読み上げ
-function calculateSize(currentWeight) {
-  const diff = lastWeight - currentWeight; // 減った分を計算
-  let size = "";
-  if (diff >= 20) size = "2L";
-  else if (diff >= 15) size = "L";
-  else size = "M";
+    <div class="controls">
+        <button onclick="recognizeWeight()">重さを確定して判定</button>
+        <button style="background:#718093;" onclick="resetBaseWeight()">総重量をリセット</button>
+    </div>
 
-  // 音声で読み上げ
-  const uttr = new SpeechSynthesisUtterance(`${size}サイズです`);
-  window.speechSynthesis.speak(uttr);
-}
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const status = document.getElementById('status');
+        const resultDisplay = document.getElementById('result-display');
+
+        let lastWeight = 0; // 直前の総重量
+
+        // 1. カメラ映像を取得
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => { video.srcObject = stream; });
+
+        // リセットボタン（最初にコンテナを乗せた時に押す）
+        async function resetBaseWeight() {
+            const weight = await runOCR();
+            if (weight) {
+                lastWeight = weight;
+                alert(`初期重量を ${lastWeight}g に設定しました`);
+            }
+        }
+
+        // 2. ボタンを押した時の処理
+        async function recognizeWeight() {
+            status.innerText = "読み取り中...";
+            const currentWeight = await runOCR();
+            
+            if (currentWeight !== null) {
+                calculateSize(currentWeight);
+            } else {
+                status.innerText = "数字が読めませんでした";
+            }
+        }
+
+        // OCR実行の共通関数
+        async function runOCR() {
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Tesseractで解析
+            const result = await Tesseract.recognize(canvas, 'eng');
+            const text = result.data.text;
+            const weight = parseFloat(text.replace(/[^0-9.]/g, ''));
+            
+            return isNaN(weight) ? null : weight;
+        }
+
+        // 3. サイズ判定と読み上げ
+        function calculateSize(currentWeight) {
+            const diff = lastWeight - currentWeight;
+            lastWeight = currentWeight; // 現在の値を次の基準にする
+
+            let size = "";
+            if (diff >= 20) size = "2L";
+            else if (diff >= 15) size = "L";
+            else if (diff >= 10) size = "M";
+            else if (diff >= 5) size = "S";
+            else size = "判定不能";
+
+            resultDisplay.innerText = `${diff.toFixed(1)}g (${size})`;
+            status.innerText =
