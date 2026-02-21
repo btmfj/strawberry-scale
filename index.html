@@ -3,46 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ重量選別 V1.05</title>
+    <title>イチゴ選別 V1.07</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #222; color: white; margin: 0; overflow: hidden; }
-        .camera-container { position: relative; width: 100vw; height: 45vh; background: #000; }
-        #video { width: 100%; height: 100%; object-fit: cover; }
-        .guide-box {
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 80%; height: 60px;
-            border: 2px solid #00ff00;
-            z-index: 10;
-        }
-        #debug-canvas {
-            position: absolute; top: 5px; right: 5px;
-            width: 120px; height: auto; border: 1px solid white; z-index: 20;
-            background: #000;
-        }
-        .ui-panel { height: 55vh; background: #fff; color: #333; padding: 10px; border-radius: 20px 20px 0 0; position: relative; z-index: 30; }
-        #result-display { font-size: 3.5rem; font-weight: bold; color: #ff4757; margin: 0; }
-        .btn { padding: 15px; font-size: 1.2rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 5px 0; }
-        .btn-red { background: #ff4757; }
-        .btn-gray { background: #747d8c; font-size: 0.9rem; }
+        body { font-family: sans-serif; text-align: center; background: #000; color: white; margin: 0; overflow: hidden; }
+        #video { width: 100vw; height: 35vh; object-fit: cover; background: #222; }
+        .ui-panel { height: 65vh; background: #fff; color: #333; padding: 10px; border-radius: 20px 20px 0 0; }
+        #debug-canvas { width: 90%; height: 100px; background: #eee; border: 2px solid #2ed573; margin-top: 5px; object-fit: contain; image-rendering: pixelated; }
+        #result-display { font-size: 4rem; font-weight: bold; color: #ff4757; margin: 5px 0; line-height: 1; }
+        .btn { padding: 20px; font-size: 1.4rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 8px 0; box-shadow: 0 4px #ccc; }
+        .btn-red { background: #ff4757; box-shadow: 0 4px #c0392b; }
+        .btn-gray { background: #747d8c; font-size: 1rem; padding: 12px; box-shadow: 0 4px #57606f; }
+        #log { font-size: 0.8rem; color: #ee5253; font-weight: bold; min-height: 1.2rem; }
     </style>
 </head>
 <body>
 
-    <div class="camera-container">
-        <video id="video" autoplay playsinline muted></video>
-        <div class="guide-box"></div>
-        <canvas id="debug-canvas"></canvas>
-    </div>
-
+    <video id="video" autoplay playsinline muted></video>
+    
     <div class="ui-panel">
+        <div style="font-size:0.7rem; color:#888;">スキャン画像（数字が繋がって見えればOK）</div>
+        <canvas id="debug-canvas"></canvas>
+        <div id="log">ログ: 待機中</div>
+
         <p id="result-display">-- g</p>
-        <div id="size-label" style="font-size: 1.2rem; font-weight: bold;">V1.05 デバッグ中</div>
+        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.07</div>
         
         <button class="btn btn-red" onclick="recognizeWeight()">重さを判定</button>
         <button class="btn btn-gray" onclick="resetWeight()">初期重量リセット</button>
-        <div id="log" style="font-size: 0.7rem; color: #888; margin-top: 5px; background: #eee; padding: 5px;">ログを表示</div>
     </div>
 
     <canvas id="process-canvas" style="display:none;"></canvas>
@@ -55,58 +43,76 @@
         let lastTotalWeight = 0;
 
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-            .then(stream => { video.srcObject = stream; });
+            .then(stream => { video.srcObject = stream; })
+            .catch(err => alert("カメラエラー: " + err));
 
         async function runOCR() {
-            logArea.innerText = "読取中...";
-            const ctx = processCanvas.getContext('2d');
+            const ctx = processCanvas.getContext('2d', { willReadFrequently: true });
             
-            // 切り出しを行わず、一旦ビデオ全体をキャンバスへ（ズレ防止）
-            processCanvas.width = video.videoWidth;
-            processCanvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+            const sw = video.videoWidth;
+            const sh = video.videoHeight;
+            const cw = sw * 0.7; // 範囲を少し絞る
+            const ch = sh * 0.15;
+            const cx = (sw - cw) / 2;
+            const cy = (sh - ch) / 2;
 
-            // デバッグ窓にも同じものを映す
-            const dCtx = debugCanvas.getContext('2d');
-            debugCanvas.width = 120;
-            debugCanvas.height = (video.videoHeight / video.videoWidth) * 120;
-            dCtx.drawImage(processCanvas, 0, 0, debugCanvas.width, debugCanvas.height);
+            processCanvas.width = cw;
+            processCanvas.height = ch;
+            ctx.drawImage(video, cx, cy, cw, ch, 0, 0, cw, ch);
+
+            // --- 強力な画像処理 ---
+            let imageData = ctx.getImageData(0, 0, cw, ch);
+            let data = imageData.data;
+            
+            // 1. 二値化（しきい値を少し下げて、液晶の薄い文字も拾う）
+            for (let i = 0; i < data.length; i += 4) {
+                let v = (data[i] + data[i+1] + data[i+2]) / 3;
+                let bw = v < 140 ? 0 : 255; // 140以下を黒（文字）にする
+                data[i] = data[i+1] = data[i+2] = bw;
+            }
+            ctx.putImageData(imageData, 0, 0);
+
+            // 2. デバッグ表示
+            debugCanvas.width = cw;
+            debugCanvas.height = ch;
+            debugCanvas.getContext('2d').putImageData(imageData, 0, 0);
 
             try {
+                logArea.innerText = "解析中...";
                 const result = await Tesseract.recognize(processCanvas, 'eng', {
                     tessedit_char_whitelist: '0123456789.',
-                    tessedit_pageseg_mode: '6' // 単一のテキストブロック
+                    tessedit_pageseg_mode: '8' // 単一の単語として認識
                 });
                 
                 let text = result.data.text.replace(/[^0-9.]/g, '');
-                logArea.innerText = "解析文字: " + text;
-                return text ? parseFloat(text) : null;
+                logArea.innerText = "読取結果: " + (text || "なし");
+                return text;
             } catch (e) { 
-                logArea.innerText = "エラー: " + e;
+                logArea.innerText = "エラー";
                 return null; 
             }
         }
 
         async function resetWeight() {
-            const w = await runOCR();
-            if (w !== null) {
+            const text = await runOCR();
+            const w = parseFloat(text);
+            if (!isNaN(w)) {
                 lastTotalWeight = w;
                 document.getElementById('size-label').innerText = `基準: ${w}g`;
-                speak("セットしました");
+                speak("セット完了");
             }
         }
 
         async function recognizeWeight() {
-            const currentWeight = await runOCR();
-            if (currentWeight !== null) {
+            const text = await runOCR();
+            const currentWeight = parseFloat(text);
+            if (!isNaN(currentWeight)) {
                 const diff = Math.abs(lastTotalWeight - currentWeight);
                 let size = (diff >= 20) ? "2エル" : (diff >= 15) ? "エル" : (diff >= 10) ? "エム" : (diff >= 5) ? "エス" : "判定不能";
                 document.getElementById('result-display').innerText = diff.toFixed(1) + "g";
                 document.getElementById('size-label').innerText = size + "サイズ";
                 lastTotalWeight = currentWeight;
                 speak(size);
-            } else {
-                logArea.innerText = "数字が見つかりませんでした";
             }
         }
 
