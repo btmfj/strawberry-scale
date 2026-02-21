@@ -3,25 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pure JS SSOCR Reader</title>
+    <title>Auto-Focus SSOCR</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: #fff; margin: 0; padding: 10px; }
+        body { font-family: sans-serif; text-align: center; background: #121212; color: #fff; margin: 0; padding: 10px; }
         #container { position: relative; display: inline-block; background: #000; }
         video { width: 100%; max-width: 500px; border-radius: 8px; }
         #guide {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 300px; height: 120px; border: 2px solid #0f0; pointer-events: none;
+            width: 320px; height: 140px; border: 2px dashed #0f0; pointer-events: none;
         }
-        .controls { background: #333; padding: 15px; border-radius: 8px; margin: 10px auto; max-width: 500px; text-align: left; }
-        canvas { border: 1px solid #0f0; margin-top: 10px; width: 300px; height: 120px; image-rendering: pixelated; }
-        #result { font-size: 5rem; font-weight: bold; color: #0f0; font-family: monospace; margin: 10px 0; }
-        input[type=range] { width: 100%; }
-        .info { color: #aaa; font-size: 0.8rem; }
+        .controls { background: #222; padding: 15px; border-radius: 8px; margin: 10px auto; max-width: 500px; text-align: left; }
+        canvas { border: 1px solid #444; margin-top: 10px; width: 320px; height: 140px; image-rendering: pixelated; }
+        #result { font-size: 5rem; font-weight: bold; color: #00ff00; font-family: 'Courier New', monospace; margin: 10px 0; min-height: 1.2em; }
+        .hint { font-size: 0.8rem; color: #888; }
     </style>
 </head>
 <body>
 
-    <h2>Pure JS SSOCR (超高速版)</h2>
+    <h2>Auto-Focus SSOCR (デジタル数字専用)</h2>
     
     <div id="container">
         <video id="video" autoplay playsinline></video>
@@ -32,7 +31,7 @@
         <label>しきい値: <span id="thresh-val">128</span></label>
         <input type="range" id="threshold" min="0" max="255" value="128">
         <label><input type="checkbox" id="invert"> 白黒反転</label>
-        <p class="info">※プレビューで数字が「白」、背景が「黒」になるように調整してください。</p>
+        <p class="hint">プレビューで数字が「白」、背景が「黒」になるよう調整してください。8888になる場合はしきい値を上げてください。</p>
     </div>
 
     <canvas id="canvas"></canvas>
@@ -47,23 +46,21 @@
 
         navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } } }).then(s => video.srcObject = s);
 
-        // --- SSOCR ロジックエンジン ---
         const SEG_MAP = {
             "1110111": "0", "0010010": "1", "1011101": "2", "1011011": "3", "0111010": "4",
             "1101011": "5", "1101111": "6", "1110010": "7", "1111111": "8", "1111011": "9",
             "0000000": ""
         };
 
-        function recognizeDigit(pixels, x, y, w, h) {
-            // セグメント位置のサンプリング点 (比率)
+        function recognizeDigit(data, x, y, w, h) {
             const checkPoints = [
-                { s: 0, px: 0.5, py: 0.05 }, // a (上)
-                { s: 1, px: 0.1, py: 0.25 }, // b (左上)
-                { s: 2, px: 0.9, py: 0.25 }, // c (右上)
-                { s: 3, px: 0.5, py: 0.50 }, // d (中央)
-                { s: 4, px: 0.1, py: 0.75 }, // e (左下)
-                { s: 5, px: 0.9, py: 0.75 }, // f (右下)
-                { s: 6, px: 0.5, py: 0.95 }  // g (下)
+                { px: 0.5, py: 0.15 }, // a (上)
+                { px: 0.2, py: 0.35 }, // b (左上)
+                { px: 0.8, py: 0.35 }, // c (右上)
+                { px: 0.5, py: 0.50 }, // d (中央)
+                { px: 0.2, py: 0.75 }, // e (左下)
+                { px: 0.8, py: 0.75 }, // f (右下)
+                { px: 0.5, py: 0.85 }  // g (下)
             ];
 
             let bits = "";
@@ -71,65 +68,57 @@
                 const ix = Math.floor(x + w * p.px);
                 const iy = Math.floor(y + h * p.py);
                 const idx = (iy * canvas.width + ix) * 4;
-                // 白(255)をセグメントありと判定
-                bits += (pixels[idx] > 128) ? "1" : "0";
+                bits += (data[idx] > 128) ? "1" : "0";
             });
-
-            return SEG_MAP[bits] || "?";
+            return SEG_MAP[bits] || "";
         }
 
-        function detectDecimal(pixels, x, y, w, h) {
-            // 右下エリアをスキャン
-            const dx = Math.floor(x + w * 0.8);
-            const dy = Math.floor(y + h * 0.85);
-            let count = 0;
-            for(let i=0; i<5; i++){
-                for(let j=0; j<5; j++){
-                    const idx = ((dy+j) * canvas.width + (dx+i)) * 4;
-                    if(pixels[idx] > 128) count++;
-                }
-            }
-            return count > 3; // 3ピクセル以上あればドット
-        }
-
-        // --- メインループ ---
         function loop() {
             if (video.paused || video.ended) return;
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            
-            canvas.width = 300; canvas.height = 120;
+            canvas.width = 320; canvas.height = 140;
             const scale = video.videoWidth / video.clientWidth;
-            const sw = 300 * scale; const sh = 120 * scale;
-            const sx = (video.videoWidth - sw)/2; const sy = (video.videoHeight - sh)/2;
-            
-            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 300, 120);
+            ctx.drawImage(video, (video.videoWidth-320*scale)/2, (video.videoHeight-140*scale)/2, 320*scale, 140*scale, 0, 0, 320, 140);
 
-            const imgData = ctx.getImageData(0, 0, 300, 120);
+            const imgData = ctx.getImageData(0, 0, 320, 140);
             const data = imgData.data;
             const thresh = parseInt(threshInput.value);
             const inv = invertCheck.checked;
 
-            // 二値化
+            // 1. 二値化
             for (let i = 0; i < data.length; i += 4) {
                 const v = ((data[i] + data[i+1] + data[i+2])/3 >= thresh) ^ inv ? 255 : 0;
                 data[i] = data[i+1] = data[i+2] = v;
             }
             ctx.putImageData(imgData, 0, 0);
 
-            // 数字の読み取り (4桁想定の簡易分割)
+            // 2. 簡易的な文字領域の抽出とスキャン
             let res = "";
+            // 4つの数字エリアを固定で定義せず、少し余裕を持ってスキャン
             for(let i=0; i<4; i++) {
-                const charX = i * 70 + 10;
-                const digit = recognizeDigit(data, charX, 10, 50, 100);
-                res += digit;
-                if(detectDecimal(data, charX, 10, 50, 100)) res += ".";
+                const x = 20 + i * 75;
+                const y = 20;
+                const w = 60;
+                const h = 100;
+
+                // デバッグ用にスキャンポイントを少し赤く塗る（開発用）
+                const char = recognizeDigit(data, x, y, w, h);
+                res += char;
+
+                // 小数点判定（数字の右下付近をチェック）
+                let dotDetected = false;
+                for(let dy=90; dy<110; dy++) {
+                    for(let dx=55; dx<70; dx++) {
+                        if(data[((y+dy)*320 + (x+dx))*4] > 128) dotDetected = true;
+                    }
+                }
+                if(dotDetected && i < 3) res += ".";
             }
             
             resultDiv.innerText = res;
             document.getElementById('thresh-val').innerText = thresh;
             requestAnimationFrame(loop);
         }
-
         video.addEventListener('play', loop);
     </script>
 </body>
