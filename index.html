@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ選別 V1.08</title>
+    <title>イチゴ選別 V1.09</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #000; color: white; margin: 0; overflow: hidden; }
         #video { width: 100vw; height: 35vh; object-fit: cover; background: #222; }
         .ui-panel { height: 65vh; background: #fff; color: #333; padding: 10px; border-radius: 20px 20px 0 0; }
-        #debug-canvas { width: 95%; height: 110px; background: #444; border: 2px solid #2ed573; margin-top: 5px; object-fit: contain; }
+        #debug-canvas { width: 95%; height: 110px; background: #fff; border: 2px solid #2ed573; margin-top: 5px; object-fit: contain; }
         #result-display { font-size: 4rem; font-weight: bold; color: #ff4757; margin: 5px 0; line-height: 1; }
         .btn { padding: 20px; font-size: 1.4rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 8px 0; }
         .btn-red { background: #ff4757; box-shadow: 0 4px #c0392b; }
@@ -22,12 +22,12 @@
     <video id="video" autoplay playsinline muted></video>
     
     <div class="ui-panel">
-        <div style="font-size:0.7rem; color:#888;">スキャン画像（数字が白っぽく浮き出れば成功）</div>
+        <div style="font-size:0.7rem; color:#888;">スキャン画像（白背景に黒い数字を目指す）</div>
         <canvas id="debug-canvas"></canvas>
         <div id="log">ログ: 待機中</div>
 
         <p id="result-display">-- g</p>
-        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.08</div>
+        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.09</div>
         
         <button class="btn btn-red" onclick="recognizeWeight()">重さを判定</button>
         <button class="btn btn-gray" onclick="resetWeight()">初期重量リセット</button>
@@ -49,7 +49,7 @@
             const ctx = processCanvas.getContext('2d', { willReadFrequently: true });
             const sw = video.videoWidth;
             const sh = video.videoHeight;
-            const cw = sw * 0.6; // 範囲をさらに絞って精度向上
+            const cw = sw * 0.6;
             const ch = sh * 0.15;
             const cx = (sw - cw) / 2;
             const cy = (sh - ch) / 2;
@@ -58,20 +58,29 @@
             processCanvas.height = ch;
             ctx.drawImage(video, cx, cy, cw, ch, 0, 0, cw, ch);
 
-            // --- 画像処理：ネガポジ反転（デジタル数字を白く浮かび上がらせる） ---
             let imageData = ctx.getImageData(0, 0, cw, ch);
             let data = imageData.data;
-            
+
+            // 1. 輝度の最大値と最小値を求める
+            let min = 255;
+            let max = 0;
             for (let i = 0; i < data.length; i += 4) {
                 let gray = (data[i] + data[i+1] + data[i+2]) / 3;
-                // 周囲より暗い部分（数字）を白く、背景を黒く反転
-                // デジタル液晶の背景（グレー）をカットするための調整
-                let v = gray < 100 ? 255 : 0; 
+                if (gray < min) min = gray;
+                if (gray > max) max = gray;
+            }
+
+            // 2. コントラストを動的に引き伸ばす (背景を白、数字を黒へ)
+            for (let i = 0; i < data.length; i += 4) {
+                let gray = (data[i] + data[i+1] + data[i+2]) / 3;
+                // min-maxの範囲を0-255に拡大
+                let v = ((gray - min) / (max - min)) * 255;
+                // さらに極端に二値化 (白と黒をハッキリさせる)
+                v = v < 100 ? 0 : 255; 
                 data[i] = data[i+1] = data[i+2] = v;
             }
             ctx.putImageData(imageData, 0, 0);
 
-            // プレビュー表示
             debugCanvas.width = cw;
             debugCanvas.height = ch;
             debugCanvas.getContext('2d').putImageData(imageData, 0, 0);
