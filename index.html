@@ -2,81 +2,50 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>イチゴ選別デバッグ版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>イチゴ選別アシスト</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f0f0; }
-        #video { width: 100%; max-width: 400px; background: #000; border-radius: 10px; }
-        #error-log { color: red; background: #fff; padding: 10px; margin: 10px; border: 1px solid red; font-size: 0.8rem; text-align: left; display: none; }
-        .btn { padding: 15px; font-size: 1.2rem; border-radius: 10px; border: none; background: #2ed573; color: white; margin: 10px; width: 80%; }
-        #status { font-weight: bold; margin: 10px; }
+        body { font-family: -apple-system, sans-serif; text-align: center; margin: 0; background: #f8f9fa; }
+        #video { width: 90%; max-width: 400px; border: 3px solid #333; border-radius: 12px; margin-top: 15px; background: #000; }
+        .container { padding: 10px; }
+        .results-section { background: white; margin: 15px; padding: 15px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        #result-display { font-size: 3.5rem; font-weight: bold; color: #d63031; margin: 5px 0; }
+        #status { font-size: 1rem; color: #636e72; min-height: 1.5rem; margin-bottom: 5px; }
+        .controls { display: flex; flex-direction: column; gap: 10px; align-items: center; margin-top: 10px; }
+        button { width: 85%; max-width: 300px; padding: 18px; font-size: 1.2rem; font-weight: bold; border-radius: 12px; border: none; cursor: pointer; }
+        .btn-start { background: #2ed573; color: white; }
+        .btn-main { background: #ff4757; color: white; box-shadow: 0 4px 0 #c0392b; }
+        .btn-main:active { transform: translateY(3px); box-shadow: none; }
+        .btn-sub { background: #747d8c; color: white; font-size: 0.9rem; padding: 10px; }
+        canvas { display: none; }
     </style>
 </head>
 <body>
 
-    <h3>🍓 イチゴ選別デバッグ</h3>
+<div class="container">
+    <h3>🍓 イチゴ重量選別</h3>
     
-    <div id="status">1. 下のボタンを押してください</div>
-    
-    <button class="btn" onclick="startCamera()">カメラを起動する</button>
-
-    <div id="error-log"></div>
+    <button id="start-btn" class="btn-start" onclick="startCamera()">1. カメラを起動する</button>
 
     <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
 
-    <div id="controls" style="display:none;">
-        <button class="btn" style="background:#ff4757" onclick="recognizeWeight()">重さを確定</button>
-        <button onclick="location.reload()">ページを再読み込み</button>
+    <div class="results-section">
+        <div id="status">カメラを起動してください</div>
+        <div id="result-display">-- g</div>
+        <div id="diff-text" style="font-size: 1.2rem; color: #2d3436; font-weight: bold;">(サイズ判定)</div>
     </div>
 
-    <script>
-        const video = document.getElementById('video');
-        const errorLog = document.getElementById('error-log');
-        const status = document.getElementById('status');
+    <div id="app-controls" class="controls" style="display:none;">
+        <button class="btn-main" onclick="recognizeWeight()">2. 重さを確定して判定</button>
+        <button class="btn-sub" onclick="resetBaseWeight()">総重量をリセット(開始時)</button>
+    </div>
+</div>
 
-        function logError(msg) {
-            errorLog.style.display = "block";
-            errorLog.innerHTML += `<div>⚠️ ${msg}</div>`;
-        }
-
-        async function startCamera() {
-            logError("カメラ起動プロセス開始...");
-            
-            // HTTPSチェック
-            if (location.protocol !== 'https:') {
-                logError("警告: HTTPS（https://...）でアクセスしていないため、ブラウザがカメラをブロックしています。");
-            }
-
-            const constraints = {
-                video: { facingMode: "environment" },
-                audio: false
-            };
-
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
-                await video.play();
-                status.innerText = "カメラ起動成功！";
-                document.getElementById('controls').style.display = "block";
-                logError("正常にビデオストリームを取得しました。");
-            } catch (err) {
-                logError(`エラー名: ${err.name}`);
-                logError(`メッセージ: ${err.message}`);
-                
-                if (err.name === 'NotAllowedError') {
-                    logError("原因: ブラウザまたは設定でカメラの使用が『拒否』されています。");
-                } else if (err.name === 'NotFoundError') {
-                    logError("原因: カメラデバイスが見つかりません。");
-                }
-            }
-        }
-
-        // 重さ判定（簡易版）
-        async function recognizeWeight() {
-            status.innerText = "OCR準備中...";
-            // 以前のコードのOCR処理をここに継続して入れられます
-        }
-    </script>
-</body>
-</html>
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const status = document.getElementById('status');
+    const resultDisplay = document.getElementById('result-display');
+    const diffText = document
