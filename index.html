@@ -3,97 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ重量選別 V1.02</title>
+    <title>イチゴ重量選別 V1.03</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #333; color: white; margin: 0; overflow: hidden; }
-        .camera-container { position: relative; width: 100vw; height: 60vh; background: #000; }
+        body { font-family: sans-serif; text-align: center; background: #222; color: white; margin: 0; overflow: hidden; }
+        .camera-container { position: relative; width: 100vw; height: 50vh; background: #000; }
         #video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* 秤の数字を合わせるガイド枠 */
+        /* ガイド枠をより見やすく */
         .guide-box {
             position: absolute; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            width: 250px; height: 120px;
-            border: 3px solid #2ed573; border-radius: 10px;
-            box-shadow: 0 0 0 1000px rgba(0,0,0,0.5);
-            display: flex; align-items: center; justify-content: center;
+            width: 280px; height: 100px;
+            border: 4px solid #00ff00; border-radius: 8px;
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
+            z-index: 10;
         }
-        .guide-label { position: absolute; top: -25px; color: #2ed573; font-size: 0.8rem; }
+        
+        /* 解析中の画像を確認するための小窓（デバッグ用） */
+        #debug-canvas {
+            position: absolute; bottom: 5px; right: 5px;
+            width: 120px; border: 1px solid white; z-index: 20;
+            background: #fff;
+        }
 
-        .ui-panel { height: 40vh; background: #fff; color: #333; padding: 10px; border-radius: 20px 20px 0 0; }
-        #result-display { font-size: 3.5rem; font-weight: bold; color: #ff4757; margin: 0; }
-        .btn { padding: 15px; font-size: 1.2rem; border-radius: 50px; border: none; color: white; width: 80%; font-weight: bold; margin: 5px; }
-        .btn-red { background: #ff4757; }
-        .btn-gray { background: #747d8c; font-size: 0.9rem; }
-        #log { font-size: 0.7rem; color: #888; margin-top: 5px; height: 40px; overflow: hidden; }
+        .ui-panel { height: 50vh; background: #fff; color: #333; padding: 15px; border-radius: 20px 20px 0 0; position: relative; z-index: 30; }
+        #result-display { font-size: 4rem; font-weight: bold; color: #ff4757; margin: 0; line-height: 1; }
+        .btn { padding: 20px; font-size: 1.4rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 10px 0; touch-action: manipulation; }
+        .btn-red { background: #ff4757; box-shadow: 0 4px #c0392b; }
+        .btn-red:active { transform: translateY(2px); box-shadow: none; }
+        .btn-gray { background: #747d8c; font-size: 1rem; padding: 12px; }
     </style>
 </head>
 <body>
 
     <div class="camera-container">
         <video id="video" autoplay playsinline muted></video>
-        <div class="guide-box">
-            <div class="guide-label">ここに数字を合わせてください</div>
-        </div>
+        <div class="guide-box"></div>
+        <canvas id="debug-canvas"></canvas>
     </div>
 
     <div class="ui-panel">
-        <div id="status" style="font-size:0.9rem;">秤の数字を枠に入れて判定を押してください</div>
         <p id="result-display">-- g</p>
-        <div id="size-label" style="font-size: 1.2rem; font-weight: bold;">(サイズ)</div>
+        <div id="size-label" style="font-size: 1.5rem; font-weight: bold; margin-bottom: 10px;">準備完了</div>
         
         <button class="btn btn-red" onclick="recognizeWeight()">重さを判定</button>
-        <button class="btn btn-gray" onclick="resetWeight()">開始時の重さをセット</button>
-        <div id="log">ログ: 待機中</div>
+        <button class="btn btn-gray" onclick="resetWeight()">現在の総重量をリセット</button>
+        <div id="log" style="font-size: 0.8rem; color: #888; margin-top: 10px;">ログ: 待機中</div>
     </div>
 
-    <canvas id="canvas" style="display:none;"></canvas>
+    <canvas id="process-canvas" style="display:none;"></canvas>
 
     <script>
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
+        const processCanvas = document.getElementById('process-canvas');
+        const debugCanvas = document.getElementById('debug-canvas');
         const logArea = document.getElementById('log');
-        const statusText = document.getElementById('status');
         let lastTotalWeight = 0;
 
-        // カメラ起動
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
             .then(stream => { video.srcObject = stream; });
 
-        function addLog(msg) {
-            logArea.innerText = "ログ: " + msg;
-        }
-
         async function runOCR() {
-            addLog("読み取り中...");
-            const context = canvas.getContext('2d');
+            logArea.innerText = "読み取り中...";
+            const ctx = processCanvas.getContext('2d');
             
-            // ガイド枠の部分だけを切り抜いて解析する
+            // 1. ガイド枠の範囲を切り出し
             const scale = video.videoWidth / video.clientWidth;
-            const w = 250 * scale;
-            const h = 120 * scale;
+            const w = 280 * scale;
+            const h = 100 * scale;
             const x = (video.videoWidth - w) / 2;
             const y = (video.videoHeight - h) / 2;
 
-            canvas.width = w;
-            canvas.height = h;
-            context.drawImage(video, x, y, w, h, 0, 0, w, h);
+            processCanvas.width = w;
+            processCanvas.height = h;
+            ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
+
+            // 2. 画像処理（グレースケール & コントラスト強調）
+            let imageData = ctx.getImageData(0, 0, w, h);
+            let data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                let avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                // 二値化：一定の暗さ（液晶の文字）を黒、それ以外を白にする
+                let threshold = 120; 
+                let v = (avg < threshold) ? 0 : 255;
+                data[i] = data[i+1] = data[i+2] = v;
+            }
+            ctx.putImageData(imageData, 0, 0);
+
+            // デバッグ表示用
+            debugCanvas.width = w;
+            debugCanvas.height = h;
+            debugCanvas.getContext('2d').putImageData(imageData, 0, 0);
 
             try {
-                // デジタル数字に特化させるため、認識対象を「数字」と「小数点」に限定
-                const result = await Tesseract.recognize(canvas, 'eng', {
-                    tessedit_char_whitelist: '0123456789.' 
+                const result = await Tesseract.recognize(processCanvas, 'eng', {
+                    tessedit_char_whitelist: '0123456789.',
+                    tessedit_pageseg_mode: '7' // 1行のテキストとして認識
                 });
                 
-                let text = result.data.text.trim();
-                addLog("読取結果: " + text);
-                
-                // 読み取った文字列から最初に見つかった数字を抽出
-                const match = text.match(/[0-9.]+/);
-                return match ? parseFloat(match[0]) : null;
+                let text = result.data.text.replace(/[^0-9.]/g, '');
+                logArea.innerText = "読取結果: " + text;
+                return text ? parseFloat(text) : null;
             } catch (e) {
-                addLog("エラー発生");
                 return null;
             }
         }
@@ -102,30 +114,21 @@
             const w = await runOCR();
             if (w !== null) {
                 lastTotalWeight = w;
-                statusText.innerText = `基準重量: ${w}g`;
-                speak("セットしました");
-            } else {
-                alert("数字がうまく読めませんでした。枠に近づけてください。");
+                document.getElementById('size-label').innerText = `基準: ${w}g`;
+                speak("リセットしました");
             }
         }
 
         async function recognizeWeight() {
             const currentWeight = await runOCR();
             if (currentWeight !== null) {
-                const diff = lastTotalWeight - currentWeight;
-                let size = "";
-                if (diff >= 20) size = "2L";
-                else if (diff >= 15) size = "L";
-                else if (diff >= 10) size = "M";
-                else if (diff >= 5) size = "S";
-                else size = "判定不能";
+                const diff = Math.abs(lastTotalWeight - currentWeight);
+                let size = (diff >= 20) ? "2エル" : (diff >= 15) ? "エル" : (diff >= 10) ? "エム" : (diff >= 5) ? "エス" : "判定不能";
 
                 document.getElementById('result-display').innerText = diff.toFixed(1) + "g";
                 document.getElementById('size-label').innerText = size + "サイズ";
                 lastTotalWeight = currentWeight;
-                speak(size + "サイズ");
-            } else {
-                addLog("読取失敗。角度を変えてください。");
+                speak(size);
             }
         }
 
