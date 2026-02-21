@@ -48,4 +48,95 @@
     const canvas = document.getElementById('canvas');
     const status = document.getElementById('status');
     const resultDisplay = document.getElementById('result-display');
-    const diffText = document
+    const diffText = document.getElementById('diff-text');
+    const startBtn = document.getElementById('start-btn');
+    const appControls = document.getElementById('app-controls');
+
+    let lastWeight = 0;
+
+    // --- 1. カメラ起動 ---
+    async function startCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, 
+                audio: false 
+            });
+            video.srcObject = stream;
+            await video.play();
+            status.innerText = "秤を枠内に映してください";
+            startBtn.style.display = "none";
+            appControls.style.display = "flex";
+        } catch (err) {
+            alert("カメラの起動に失敗しました。設定を確認してください。");
+        }
+    }
+
+    // --- 2. OCR実行 (画像から数字を読み取る) ---
+    async function runOCR() {
+        const context = canvas.getContext('2d');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Tesseract.jsで解析
+        const result = await Tesseract.recognize(canvas, 'eng');
+        const text = result.data.text;
+        // 数字と小数点のみ抽出
+        const weight = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return isNaN(weight) ? null : weight;
+    }
+
+    // --- 3. リセット (コンテナを置いた直後) ---
+    async function resetBaseWeight() {
+        status.innerText = "初期重量を読み取り中...";
+        const weight = await runOCR();
+        if (weight !== null) {
+            lastWeight = weight;
+            resultDisplay.innerText = weight + "g";
+            status.innerText = "リセット完了。イチゴを取ってください。";
+            speak(`リセット完了。${weight}グラムから開始します。`);
+        } else {
+            status.innerText = "数字が読めませんでした";
+        }
+    }
+
+    // --- 4. メイン判定 (イチゴを取った後) ---
+    async function recognizeWeight() {
+        status.innerText = "解析中...";
+        const currentWeight = await runOCR();
+        
+        if (currentWeight !== null) {
+            const diff = lastWeight - currentWeight;
+            
+            // 判定ロジック (重さに合わせて調整してください)
+            let size = "";
+            if (diff >= 20) size = "2L";
+            else if (diff >= 15) size = "L";
+            else if (diff >= 10) size = "M";
+            else if (diff >= 5) size = "S";
+            else size = "判定不能";
+
+            // 表示更新
+            resultDisplay.innerText = diff.toFixed(1) + "g";
+            diffText.innerText = size + "サイズ";
+            status.innerText = `現在の総重量: ${currentWeight}g`;
+            
+            // 次の計算のために基準値を更新
+            lastWeight = currentWeight;
+
+            // 音声読み上げ
+            speak(size === "判定不能" ? "もう一度" : size + "サイズ");
+        } else {
+            status.innerText = "数字を読み取れませんでした";
+        }
+    }
+
+    // --- 5. 音声読み上げ ---
+    function speak(text) {
+        const uttr = new SpeechSynthesisUtterance(text);
+        uttr.lang = "ja-JP";
+        window.speechSynthesis.speak(uttr);
+    }
+</script>
+</body>
+</html>
