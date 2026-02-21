@@ -3,18 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ選別 V1.07</title>
+    <title>イチゴ選別 V1.08</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #000; color: white; margin: 0; overflow: hidden; }
         #video { width: 100vw; height: 35vh; object-fit: cover; background: #222; }
         .ui-panel { height: 65vh; background: #fff; color: #333; padding: 10px; border-radius: 20px 20px 0 0; }
-        #debug-canvas { width: 90%; height: 100px; background: #eee; border: 2px solid #2ed573; margin-top: 5px; object-fit: contain; image-rendering: pixelated; }
+        #debug-canvas { width: 95%; height: 110px; background: #444; border: 2px solid #2ed573; margin-top: 5px; object-fit: contain; }
         #result-display { font-size: 4rem; font-weight: bold; color: #ff4757; margin: 5px 0; line-height: 1; }
-        .btn { padding: 20px; font-size: 1.4rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 8px 0; box-shadow: 0 4px #ccc; }
+        .btn { padding: 20px; font-size: 1.4rem; border-radius: 50px; border: none; color: white; width: 90%; font-weight: bold; margin: 8px 0; }
         .btn-red { background: #ff4757; box-shadow: 0 4px #c0392b; }
-        .btn-gray { background: #747d8c; font-size: 1rem; padding: 12px; box-shadow: 0 4px #57606f; }
-        #log { font-size: 0.8rem; color: #ee5253; font-weight: bold; min-height: 1.2rem; }
+        .btn-gray { background: #747d8c; font-size: 1rem; padding: 12px; }
+        #log { font-size: 0.8rem; color: #57606f; min-height: 1.2rem; background: #f1f2f6; border-radius: 5px; }
     </style>
 </head>
 <body>
@@ -22,12 +22,12 @@
     <video id="video" autoplay playsinline muted></video>
     
     <div class="ui-panel">
-        <div style="font-size:0.7rem; color:#888;">スキャン画像（数字が繋がって見えればOK）</div>
+        <div style="font-size:0.7rem; color:#888;">スキャン画像（数字が白っぽく浮き出れば成功）</div>
         <canvas id="debug-canvas"></canvas>
         <div id="log">ログ: 待機中</div>
 
         <p id="result-display">-- g</p>
-        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.07</div>
+        <div id="size-label" style="font-size: 1.5rem; font-weight: bold;">V1.08</div>
         
         <button class="btn btn-red" onclick="recognizeWeight()">重さを判定</button>
         <button class="btn btn-gray" onclick="resetWeight()">初期重量リセット</button>
@@ -44,14 +44,12 @@
 
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
             .then(stream => { video.srcObject = stream; })
-            .catch(err => alert("カメラエラー: " + err));
 
         async function runOCR() {
             const ctx = processCanvas.getContext('2d', { willReadFrequently: true });
-            
             const sw = video.videoWidth;
             const sh = video.videoHeight;
-            const cw = sw * 0.7; // 範囲を少し絞る
+            const cw = sw * 0.6; // 範囲をさらに絞って精度向上
             const ch = sh * 0.15;
             const cx = (sw - cw) / 2;
             const cy = (sh - ch) / 2;
@@ -60,19 +58,20 @@
             processCanvas.height = ch;
             ctx.drawImage(video, cx, cy, cw, ch, 0, 0, cw, ch);
 
-            // --- 強力な画像処理 ---
+            // --- 画像処理：ネガポジ反転（デジタル数字を白く浮かび上がらせる） ---
             let imageData = ctx.getImageData(0, 0, cw, ch);
             let data = imageData.data;
             
-            // 1. 二値化（しきい値を少し下げて、液晶の薄い文字も拾う）
             for (let i = 0; i < data.length; i += 4) {
-                let v = (data[i] + data[i+1] + data[i+2]) / 3;
-                let bw = v < 140 ? 0 : 255; // 140以下を黒（文字）にする
-                data[i] = data[i+1] = data[i+2] = bw;
+                let gray = (data[i] + data[i+1] + data[i+2]) / 3;
+                // 周囲より暗い部分（数字）を白く、背景を黒く反転
+                // デジタル液晶の背景（グレー）をカットするための調整
+                let v = gray < 100 ? 255 : 0; 
+                data[i] = data[i+1] = data[i+2] = v;
             }
             ctx.putImageData(imageData, 0, 0);
 
-            // 2. デバッグ表示
+            // プレビュー表示
             debugCanvas.width = cw;
             debugCanvas.height = ch;
             debugCanvas.getContext('2d').putImageData(imageData, 0, 0);
@@ -81,16 +80,12 @@
                 logArea.innerText = "解析中...";
                 const result = await Tesseract.recognize(processCanvas, 'eng', {
                     tessedit_char_whitelist: '0123456789.',
-                    tessedit_pageseg_mode: '8' // 単一の単語として認識
+                    tessedit_pageseg_mode: '7'
                 });
-                
                 let text = result.data.text.replace(/[^0-9.]/g, '');
                 logArea.innerText = "読取結果: " + (text || "なし");
                 return text;
-            } catch (e) { 
-                logArea.innerText = "エラー";
-                return null; 
-            }
+            } catch (e) { return null; }
         }
 
         async function resetWeight() {
