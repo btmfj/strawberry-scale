@@ -3,39 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>いちご選別くん V1.81</title>
+    <title>いちご選別くん V1.85</title>
     <style>
-        body { font-family: 'Arial Black', sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 10px; overflow: hidden; }
-        .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        /* スクロールを許可し、全体の余白を最小化 */
+        body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 5px; overflow-y: auto; }
+        .container { max-width: 450px; margin: auto; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         
-        #video-container { position: relative; width: 100%; aspect-ratio: 1/1; overflow: hidden; border-radius: 15px; background: #000; }
+        /* カメラコンテナをスリムに（16:9に近い比率で高さを抑える） */
+        #video-container { position: relative; width: 100%; aspect-ratio: 16/10; overflow: hidden; border-radius: 10px; background: #000; margin-bottom: 8px; }
         video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* 緑枠をさらにスリムに */
         #guide-box {
-            position: absolute; top: 50%; left: 50%; width: 70%; height: 25%;
-            border: 4px solid #00ff00; transform: translate(-50%, -50%);
-            box-shadow: 0 0 0 1000px rgba(0,0,0,0.8); pointer-events: none;
+            position: absolute; top: 50%; left: 50%; width: 60%; height: 20%;
+            border: 3px solid #00ff00; transform: translate(-50%, -50%);
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.6); pointer-events: none;
         }
 
         /* 確定時の巨大フラッシュ */
         #flash-overlay {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             display: none; align-items: center; justify-content: center;
-            z-index: 1000; font-size: 15rem; font-weight: bold; color: white;
-            text-shadow: 10px 10px 0 rgba(0,0,0,0.2);
-            animation: pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 1000; font-size: 12rem; font-weight: bold; color: white;
+            text-shadow: 8px 8px 0 rgba(0,0,0,0.2);
         }
-        @keyframes pop { 0% { transform: scale(0.5); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 
-        .settings-panel { margin: 15px 0; padding: 12px; background: #f1f2f6; border-radius: 12px; text-align: left; }
-        .radio-group { display: flex; justify-content: space-around; margin-bottom: 10px; font-weight: bold; }
-        .btn-light { width: 100%; background: #ffa502; border: none; color: white; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 10px; }
+        .settings-panel { padding: 8px; background: #f8f9fa; border-radius: 10px; margin-bottom: 8px; font-size: 0.85rem; }
+        .radio-group { display: flex; justify-content: space-around; margin-bottom: 8px; }
+        .btn-light { width: 100%; background: #ffa502; border: none; color: white; padding: 10px; border-radius: 8px; font-weight: bold; margin-bottom: 8px; }
         .btn-light.active { background: #ff4757; }
 
-        .monitor-section { margin-top: 10px; padding: 10px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
-        canvas { width: 100%; background: #000; border-radius: 5px; }
+        .slider-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+        .slider-row input { flex: 1; }
+
+        /* モニターエリアをコンパクトに */
+        .monitor-section { padding: 8px; border: 2px solid #ffa502; border-radius: 12px; background: #fffcf0; }
+        canvas { width: 100%; height: auto; background: #000; border-radius: 4px; display: block; margin: 0 auto; }
         
-        #weight-text { font-size: 2.2rem; font-weight: bold; color: #333; margin: 10px 0; }
-        #debug-log { font-size: 0.8rem; color: #ff4757; font-weight: bold; }
+        #weight-text { font-size: 1.8rem; font-weight: bold; color: #333; margin: 5px 0; }
+        #debug-log { font-size: 0.75rem; color: #ff4757; font-weight: bold; min-height: 1em; }
     </style>
 </head>
 <body>
@@ -43,7 +49,7 @@
 <div id="flash-overlay"></div>
 
 <div class="container">
-    <h1 style="font-size:1.2rem; color:#ff4757; margin:0 0 10px 0;">🍓 イチゴ・スベリー計 V1.81</h1>
+    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.85</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
@@ -55,48 +61,44 @@
             <label><input type="radio" name="scale_type" value="integer" checked> 整数秤</label>
             <label><input type="radio" name="scale_type" value="decimal"> 小数秤</label>
         </div>
-        <button id="light-btn" class="btn-light">🔦 ライト切替 (要タップ)</button>
-        <div style="font-size:0.8rem; color:#666;">
-            ズーム <input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.5">
-            太さ <input type="range" id="threshold-slider" min="0" max="255" value="130">
+        
+        <button id="light-btn" class="btn-light">🔦 ライト ON/OFF</button>
+        
+        <div class="slider-row">
+            <span>🔍</span><input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.6">
+            <span>🌓</span><input type="range" id="threshold-slider" min="0" max="255" value="130">
         </div>
     </div>
 
     <div class="monitor-section">
         <canvas id="monitor-canvas"></canvas>
         <div id="weight-text">-- g</div>
-        <div id="debug-log">画面を一度タップして音声を有効にしてください</div>
+        <div id="debug-log">画面をタップして音声を有効化</div>
     </div>
 </div>
 
 <script>
-    // --- 音声設定 ---
     const AUDIO_BASE_URL = "https://raw.githubusercontent.com/btmfj/strawberry-scale/main/";
     const SIZES = {
-        "4L": { color: "#0984e3" }, // 青
-        "3L": { color: "#d63031" }, // 赤
-        "2L": { color: "#0984e3" }, // 青
-        "L":  { color: "#d63031" }, // 赤
-        "M":  { color: "#0984e3" }, // 青
-        "S":  { color: "#d63031" }  // 赤
+        "4L": { color: "#0984e3" }, "3L": { color: "#d63031" },
+        "2L": { color: "#0984e3" }, "L":  { color: "#d63031" },
+        "M":  { color: "#0984e3" }, "S":  { color: "#d63031" }
     };
 
     const audioFiles = {};
     let audioEnabled = false;
 
-    // 音声を事前ロード（タップ時にロック解除）
     Object.keys(SIZES).forEach(size => {
         audioFiles[size] = new Audio(`${AUDIO_BASE_URL}${size.toLowerCase()}.mp3`);
     });
 
-    // ブラウザの音声制限を解除する儀式
     document.body.addEventListener('click', () => {
         if (!audioEnabled) {
             Object.values(audioFiles).forEach(a => {
                 a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(()=>{});
             });
             audioEnabled = true;
-            document.getElementById('debug-log').innerText = "🔊 音声準備完了";
+            document.getElementById('debug-log').innerText = "🔊 音声有効";
             document.getElementById('debug-log').style.color = "#2ed573";
         }
     }, { once: true });
@@ -119,7 +121,9 @@
 
     async function initCamera() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
+            });
             video.srcObject = stream;
             track = stream.getVideoTracks()[0];
         } catch (err) { debugLog.innerText = "カメラエラー"; }
@@ -138,7 +142,8 @@
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             const zoom = parseFloat(zoomSlider.value);
             const vW = video.videoWidth; const vH = video.videoHeight;
-            const cropW = (vW * 0.7) / zoom; const cropH = (vH * 0.25) / zoom;
+            // 横幅を広め、縦を狭くしてスリムに
+            const cropW = (vW * 0.6) / zoom; const cropH = (vH * 0.2) / zoom;
             const cropX = (vW - cropW) / 2; const cropY = (vH - cropH) / 2;
             monitorCanvas.width = cropW; monitorCanvas.height = cropH;
             ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
@@ -174,10 +179,8 @@
     function handleWeight(weight) {
         const type = document.querySelector('input[name="scale_type"]:checked').value;
         weightText.innerText = (type === 'decimal' ? weight.toFixed(1) : Math.floor(weight)) + " g";
-
         weightHistory.push(weight);
         if (weightHistory.length > 3) weightHistory.shift();
-        
         if (weightHistory.length === 3 && weightHistory.every(v => v === weightHistory[0])) {
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
@@ -200,17 +203,13 @@
     }
 
     function triggerVisualAudio(size) {
-        // ビジュアル演出
         overlay.innerText = size;
         overlay.style.backgroundColor = SIZES[size].color;
         overlay.style.display = 'flex';
-        
-        // 音声再生
         if (audioEnabled && audioFiles[size]) {
             audioFiles[size].currentTime = 0;
-            audioFiles[size].play().catch(e => console.error(e));
+            audioFiles[size].play().catch(e => {});
         }
-
         setTimeout(() => { overlay.style.display = 'none'; }, 1000);
     }
 
