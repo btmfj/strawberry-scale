@@ -3,40 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ・スベリー計 V1.33</title>
+    <title>イチゴ・スベリー計 V1.50</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 10px; }
         .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
-        h1 { color: #ff4757; font-size: 1.4rem; margin-bottom: 10px; }
-        
-        #video-container { position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden; border-radius: 10px; background: #000; }
+        #video-container { position: relative; width: 100%; aspect-ratio: 1/1; overflow: hidden; border-radius: 15px; background: #000; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        
-        /* 読み取り枠を「数字だけ」に絞るために細く */
         #guide-box {
             position: absolute; top: 50%; left: 50%;
-            width: 50%; height: 25%;
+            width: 70%; height: 25%;
             border: 4px solid #00ff00;
             transform: translate(-50%, -50%);
             box-shadow: 0 0 0 1000px rgba(0,0,0,0.8);
             pointer-events: none;
         }
-
         .monitor-section { margin-top: 10px; padding: 10px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
         canvas { width: 100%; background: #000; border-radius: 5px; }
-        
-        #size-display { font-size: 6.5rem; font-weight: bold; color: #ff4757; margin: 0; line-height: 1; }
-        #weight-text { font-size: 1.5rem; font-weight: bold; color: #333; margin-top: 5px; }
-        #debug-log { font-size: 0.75rem; color: #ff4757; margin-top: 8px; font-weight: bold; }
-        
-        .slider-box { margin: 10px 0; padding: 8px; background: #f1f2f6; border-radius: 10px; font-size: 0.8rem; }
-        input[type="range"] { width: 85%; }
+        #size-display { font-size: 7rem; font-weight: bold; color: #ff4757; margin: 0; }
+        .slider-box { margin: 10px 0; padding: 8px; background: #f1f2f6; border-radius: 10px; font-size: 0.8rem; text-align: left; }
+        input[type="range"] { width: 100%; margin: 5px 0; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>🍓 イチゴ・スベリー計 V1.33</h1>
+    <h1 style="color:#ff4757; font-size:1.2rem; margin:0;">🍓 イチゴ・スベリー計 V1.50</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
@@ -44,15 +35,17 @@
     </div>
 
     <div class="slider-box">
-        <label>数字を白く太く調整 → <span id="th-val">130</span></label><br>
+        <label>🔍 ズーム（少し離してズームするとピントが合います）</label>
+        <input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.5">
+        <label>🌓 数字の太さ（棒が繋がるように調整）</label>
         <input type="range" id="threshold-slider" min="0" max="255" value="130">
     </div>
 
     <div class="monitor-section">
         <canvas id="monitor-canvas"></canvas>
         <div id="size-display">--</div>
-        <div id="weight-text">読取中...</div>
-        <div id="debug-log">接続中</div>
+        <div id="weight-text" style="font-size:1.5rem; font-weight:bold;">秤を映してください</div>
+        <div id="debug-log" style="font-size:0.7rem; color:#888;">接続中...</div>
     </div>
 </div>
 
@@ -60,9 +53,9 @@
     const API_URL = "https://strawberry-backend-2rxg.onrender.com/ocr";
     const video = document.getElementById('video');
     const monitorCanvas = document.getElementById('monitor-canvas');
-    const ctx = monitorCanvas.getContext('2d', { willReadFrequently: true });
+    const ctx = monitorCanvas.getContext('2d');
     const thresholdSlider = document.getElementById('threshold-slider');
-    const thVal = document.getElementById('th-val');
+    const zoomSlider = document.getElementById('zoom-slider');
     const debugLog = document.getElementById('debug-log');
     const sizeDisplay = document.getElementById('size-display');
     const weightText = document.getElementById('weight-text');
@@ -90,16 +83,20 @@
 
     function processFrame() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            const zoom = parseFloat(zoomSlider.value);
             const vW = video.videoWidth;
             const vH = video.videoHeight;
-            // より中央に集中
-            const cropW = vW * 0.5;
-            const cropH = vH * 0.25;
+            
+            // ズームを考慮した切り出し
+            const cropW = (vW * 0.7) / zoom;
+            const cropH = (vH * 0.25) / zoom;
             const cropX = (vW - cropW) / 2;
             const cropY = (vH - cropH) / 2;
+
             monitorCanvas.width = cropW;
             monitorCanvas.height = cropH;
             ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            
             const imageData = ctx.getImageData(0, 0, cropW, cropH);
             const data = imageData.data;
             const th = parseInt(thresholdSlider.value);
@@ -123,10 +120,12 @@
                 const response = await fetch(API_URL, { method: 'POST', body: formData });
                 const data = await response.json();
                 if (data.number) {
-                    debugLog.innerText = "最新読取: " + data.number;
+                    debugLog.innerText = "受信: " + data.number;
                     handleWeight(parseInt(data.number));
+                } else {
+                    debugLog.innerText = "読み取り中...";
                 }
-            } catch (err) { debugLog.innerText = "待機中..."; }
+            } catch (err) { debugLog.innerText = "通信中..."; }
             finally { isProcessing = false; }
         }, 'image/png');
     }
@@ -151,11 +150,10 @@
         }
     }
 
-    thresholdSlider.oninput = () => { thVal.innerText = thresholdSlider.value; };
     initCamera();
     video.addEventListener('play', () => {
         processFrame();
-        setInterval(uploadToOCR, 400); 
+        setInterval(uploadToOCR, 300); 
     });
 </script>
 </body>
