@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>いちご選別くん V1.95</title>
+    <title>いちご選別くん V1.96</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 5px; overflow-y: auto; }
         .container { max-width: 450px; margin: auto; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
@@ -44,7 +44,7 @@
 <div id="flash-overlay"></div>
 
 <div class="container">
-    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.95</h1>
+    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.96</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline muted></video>
@@ -83,7 +83,7 @@
     const audioCache = {};
     let audioEnabled = false;
 
-    // --- 音声ファイルをメモリに完全に読み込む関数 ---
+    // 音声をメモリにキャッシュ
     async function preloadAudios() {
         const loadTasks = Object.keys(SIZES).concat(['start']).map(async (key) => {
             const fileName = key === 'start' ? 'start.mp3' : `${key.toLowerCase()}.mp3`;
@@ -91,10 +91,8 @@
                 const response = await fetch(AUDIO_BASE_URL + fileName);
                 const blob = await response.blob();
                 audioCache[key] = new Audio(URL.createObjectURL(blob));
-                audioCache[key].load(); // メモリに常駐させる
-            } catch (e) {
-                console.error("Failed to load:", fileName);
-            }
+                audioCache[key].load();
+            } catch (e) { console.error("Load error:", fileName); }
         });
         await Promise.all(loadTasks);
         document.getElementById('debug-log').innerText = "⚠️ ここをタップして開始 ⚠️";
@@ -104,10 +102,10 @@
         if (!audioEnabled && audioCache['start']) {
             audioCache['start'].play().then(() => {
                 audioEnabled = true;
-                document.getElementById('debug-log').innerText = "🔊 音声有効";
+                document.getElementById('debug-log').innerText = "⚡ 高速読取モード有効";
                 document.getElementById('debug-log').style.color = "#2ed573";
                 document.getElementById('debug-log').style.borderColor = "#2ed573";
-            }).catch(e => console.log("Init audio error:", e));
+            }).catch(e => console.log(e));
         }
     }, { once: true });
 
@@ -166,21 +164,35 @@
     }
 
     async function uploadToOCR() {
-        if (isProcessing || video.paused) return;
+        // 処理中の場合はスキップし、通信の渋滞を防ぐ
+        if (isProcessing || video.paused || !video.srcObject) return;
         isProcessing = true;
+
         const scaleType = document.querySelector('input[name="scale_type"]:checked').value;
+        
+        // JPEG圧縮（品質0.7）で送信データ量を減らし通信速度を稼ぐ
         monitorCanvas.toBlob(async (blob) => {
+            if (!blob) { isProcessing = false; return; }
             const formData = new FormData();
-            formData.append('file', blob, 'digit.png');
+            formData.append('file', blob, 'digit.jpg');
             formData.append('scale_type', scaleType);
             try {
+                const startTime = Date.now();
                 const response = await fetch(API_URL, { method: 'POST', body: formData });
                 const data = await response.json();
+                
+                // 通信時間のデバッグ表示（必要なければ消せます）
+                // console.log("Latency:", Date.now() - startTime, "ms");
+
                 if (data.number !== undefined && data.number !== null) {
                     handleWeight(data.number);
                 }
-            } catch (err) { } finally { isProcessing = false; }
-        }, 'image/png');
+            } catch (err) { 
+                console.error("OCR Error:", err);
+            } finally { 
+                isProcessing = false; 
+            }
+        }, 'image/jpeg', 0.7); 
     }
 
     function handleWeight(weight) {
@@ -188,10 +200,10 @@
         weightText.innerText = (type === 'decimal' ? weight.toFixed(1) : Math.floor(weight)) + " g";
         weightHistory.push(weight);
         if (weightHistory.length > 3) weightHistory.shift();
+        
         if (weightHistory.length === 3 && weightHistory.every(v => v === weightHistory[0])) {
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
-            // 変化量が5g〜100gの場合にサイズ判定
             if (diff >= 5 && diff <= 100) {
                 const size = determineSize(diff);
                 if (size) triggerVisualAudio(size);
@@ -215,20 +227,22 @@
         overlay.style.backgroundColor = SIZES[size].color;
         overlay.style.display = 'flex';
         
-        // メモリ上の音声を即座に再生
         if (audioEnabled && audioCache[size]) {
-            audioCache[size].pause(); // 前の音が鳴っていたら止める
+            audioCache[size].pause();
             audioCache[size].currentTime = 0;
-            audioCache[size].play().catch(e => console.error(e));
+            audioCache[size].play().catch(e => {});
         }
         
         setTimeout(() => { overlay.style.display = 'none'; }, 1000);
     }
 
-    // 起動時にロード開始
     preloadAudios();
     initCamera();
-    video.addEventListener('play', () => { processFrame(); setInterval(uploadToOCR, 450); });
+    video.addEventListener('play', () => { 
+        processFrame(); 
+        // 300ms間隔で送信
+        setInterval(uploadToOCR, 300); 
+    });
 </script>
 </body>
 </html>
