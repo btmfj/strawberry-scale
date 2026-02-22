@@ -3,24 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>いちご選別くん V1.93</title>
+    <title>いちご選別くん V1.94</title>
     <style>
-        /* スクロールを許可し、全体の余白を最小化 */
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 5px; overflow-y: auto; }
         .container { max-width: 450px; margin: auto; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         
-        /* カメラコンテナをスリムに（16:10） */
         #video-container { position: relative; width: 100%; aspect-ratio: 16/10; overflow: hidden; border-radius: 10px; background: #000; margin-bottom: 8px; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* 緑枠 */
         #guide-box {
             position: absolute; top: 50%; left: 50%; width: 60%; height: 20%;
             border: 3px solid #00ff00; transform: translate(-50%, -50%);
             box-shadow: 0 0 0 1000px rgba(0,0,0,0.6); pointer-events: none;
         }
 
-        /* 確定時の巨大フラッシュ */
         #flash-overlay {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             display: none; align-items: center; justify-content: center;
@@ -36,12 +32,11 @@
         .slider-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
         .slider-row input { flex: 1; }
 
-        /* モニターエリア */
         .monitor-section { padding: 8px; border: 2px solid #ffa502; border-radius: 12px; background: #fffcf0; }
         canvas { width: 100%; height: auto; background: #000; border-radius: 4px; display: block; margin: 0 auto; }
         
         #weight-text { font-size: 1.8rem; font-weight: bold; color: #333; margin: 5px 0; }
-        #debug-log { font-size: 0.75rem; color: #ff4757; font-weight: bold; min-height: 1em; border: 1px dashed #ff4757; padding: 5px; border-radius: 5px; }
+        #debug-log { font-size: 0.8rem; color: #ff4757; font-weight: bold; min-height: 1.5em; border: 1px dashed #ff4757; padding: 5px; border-radius: 5px; }
     </style>
 </head>
 <body>
@@ -49,7 +44,7 @@
 <div id="flash-overlay"></div>
 
 <div class="container">
-    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.93</h1>
+    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.94</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline muted></video>
@@ -73,7 +68,7 @@
     <div class="monitor-section">
         <canvas id="monitor-canvas"></canvas>
         <div id="weight-text">-- g</div>
-        <div id="debug-log">画面をタップして開始（無音起動）</div>
+        <div id="debug-log">⚠️ ここをタップして開始 ⚠️</div>
     </div>
 </div>
 
@@ -88,21 +83,26 @@
     const audioFiles = {};
     let audioEnabled = false;
 
+    // 事前にサイズ音声をロード
     Object.keys(SIZES).forEach(size => {
         audioFiles[size] = new Audio(`${AUDIO_BASE_URL}${size.toLowerCase()}.mp3`);
     });
 
-    // 画面タップ時の処理（音声ファイルの再生は行わない）
+    // スタート音声用
+    const startAudio = new Audio(`${AUDIO_BASE_URL}start.mp3`);
+
     document.body.addEventListener('click', () => {
         if (!audioEnabled) {
-            // ダミーの無音データを再生してブラウザの制限を解除するだけにする
-            const silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==');
-            silent.play().then(() => {
+            // start.mp3 を再生して権限を取得
+            startAudio.play().then(() => {
                 audioEnabled = true;
-                document.getElementById('debug-log').innerText = "🔊 音声準備完了";
+                document.getElementById('debug-log').innerText = "🔊 音声有効";
                 document.getElementById('debug-log').style.color = "#2ed573";
                 document.getElementById('debug-log').style.borderColor = "#2ed573";
-            }).catch(e => console.log("Init audio error:", e));
+            }).catch(e => {
+                console.log("Audio Error:", e);
+                document.getElementById('debug-log').innerText = "音声再生に失敗";
+            });
         }
     }, { once: true });
 
@@ -208,7 +208,6 @@
         overlay.innerText = size;
         overlay.style.backgroundColor = SIZES[size].color;
         overlay.style.display = 'flex';
-        // 必要なサイズ確定時のみ音声を流す
         if (audioEnabled && audioFiles[size]) {
             audioFiles[size].currentTime = 0;
             audioFiles[size].play().catch(e => {});
@@ -217,7 +216,7 @@
     }
 
     initCamera();
-    video.addEventListener('play', () => { processFrame(); setInterval(uploadToOCR, 400); });
+    video.addEventListener('play', () => { processFrame(); setInterval(uploadToOCR, 450); });
 </script>
 </body>
 </html>
