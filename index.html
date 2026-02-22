@@ -3,24 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>いちご選別くん V1.85</title>
+    <title>いちご選別くん V1.90</title>
     <style>
-        /* スクロールを許可し、全体の余白を最小化 */
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 5px; overflow-y: auto; }
         .container { max-width: 450px; margin: auto; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         
-        /* カメラコンテナをスリムに（16:9に近い比率で高さを抑える） */
+        /* スタートオーバーレイ */
+        #start-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 2000;
+        }
+        .start-btn {
+            width: 200px; height: 200px; border-radius: 50%; border: none;
+            background: #ff4757; color: white; font-size: 2rem; font-weight: bold;
+            box-shadow: 0 10px 20px rgba(255, 71, 87, 0.4); cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .start-btn:active { transform: scale(0.9); }
+
         #video-container { position: relative; width: 100%; aspect-ratio: 16/10; overflow: hidden; border-radius: 10px; background: #000; margin-bottom: 8px; }
         video { width: 100%; height: 100%; object-fit: cover; }
         
-        /* 緑枠をさらにスリムに */
         #guide-box {
             position: absolute; top: 50%; left: 50%; width: 60%; height: 20%;
             border: 3px solid #00ff00; transform: translate(-50%, -50%);
             box-shadow: 0 0 0 1000px rgba(0,0,0,0.6); pointer-events: none;
         }
 
-        /* 確定時の巨大フラッシュ */
         #flash-overlay {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             display: none; align-items: center; justify-content: center;
@@ -36,20 +47,25 @@
         .slider-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
         .slider-row input { flex: 1; }
 
-        /* モニターエリアをコンパクトに */
         .monitor-section { padding: 8px; border: 2px solid #ffa502; border-radius: 12px; background: #fffcf0; }
         canvas { width: 100%; height: auto; background: #000; border-radius: 4px; display: block; margin: 0 auto; }
         
         #weight-text { font-size: 1.8rem; font-weight: bold; color: #333; margin: 5px 0; }
-        #debug-log { font-size: 0.75rem; color: #ff4757; font-weight: bold; min-height: 1em; }
+        #debug-log { font-size: 0.75rem; color: #888; min-height: 1em; }
     </style>
 </head>
 <body>
 
+<div id="start-overlay">
+    <h1 style="color:#ff4757; margin-bottom:20px;">🍓 いちご選別くん</h1>
+    <button id="start-btn" class="start-btn">スタート</button>
+    <p style="margin-top:20px; color:#666;">ボタンを押すと音声が有効になります</p>
+</div>
+
 <div id="flash-overlay"></div>
 
 <div class="container">
-    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.85</h1>
+    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.90</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
@@ -73,7 +89,7 @@
     <div class="monitor-section">
         <canvas id="monitor-canvas"></canvas>
         <div id="weight-text">-- g</div>
-        <div id="debug-log">画面をタップして音声を有効化</div>
+        <div id="debug-log">準備完了</div>
     </div>
 </div>
 
@@ -88,20 +104,28 @@
     const audioFiles = {};
     let audioEnabled = false;
 
+    // 音声ファイルのリスト作成
     Object.keys(SIZES).forEach(size => {
         audioFiles[size] = new Audio(`${AUDIO_BASE_URL}${size.toLowerCase()}.mp3`);
     });
 
-    document.body.addEventListener('click', () => {
-        if (!audioEnabled) {
-            Object.values(audioFiles).forEach(a => {
-                a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(()=>{});
-            });
+    // スタートボタンの処理
+    const startOverlay = document.getElementById('start-overlay');
+    const startBtn = document.getElementById('start-btn');
+
+    startBtn.onclick = () => {
+        // ブラウザの音声制限を解除するために「無音」を一瞬だけ作成して鳴らす
+        // 各ファイルを一斉に鳴らすのをやめ、ダミーの音源で権限だけ取得する
+        const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==');
+        silentAudio.play().then(() => {
             audioEnabled = true;
+            startOverlay.style.display = 'none'; // オーバーレイを消す
             document.getElementById('debug-log').innerText = "🔊 音声有効";
-            document.getElementById('debug-log').style.color = "#2ed573";
-        }
-    }, { once: true });
+            initCamera(); // カメラもここで開始
+        }).catch(err => {
+            alert("スタートに失敗しました。画面をタップしてもう一度お試しください。");
+        });
+    };
 
     const API_URL = "https://strawberry-backend-2rxg.onrender.com/ocr";
     const video = document.getElementById('video');
@@ -126,6 +150,8 @@
             });
             video.srcObject = stream;
             track = stream.getVideoTracks()[0];
+            processFrame(); 
+            setInterval(uploadToOCR, 400);
         } catch (err) { debugLog.innerText = "カメラエラー"; }
     }
 
@@ -142,7 +168,6 @@
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             const zoom = parseFloat(zoomSlider.value);
             const vW = video.videoWidth; const vH = video.videoHeight;
-            // 横幅を広め、縦を狭くしてスリムに
             const cropW = (vW * 0.6) / zoom; const cropH = (vH * 0.2) / zoom;
             const cropX = (vW - cropW) / 2; const cropY = (vH - cropH) / 2;
             monitorCanvas.width = cropW; monitorCanvas.height = cropH;
@@ -206,15 +231,13 @@
         overlay.innerText = size;
         overlay.style.backgroundColor = SIZES[size].color;
         overlay.style.display = 'flex';
+        // 必要なサイズのみを個別に再生
         if (audioEnabled && audioFiles[size]) {
             audioFiles[size].currentTime = 0;
             audioFiles[size].play().catch(e => {});
         }
         setTimeout(() => { overlay.style.display = 'none'; }, 1000);
     }
-
-    initCamera();
-    video.addEventListener('play', () => { processFrame(); setInterval(uploadToOCR, 400); });
 </script>
 </body>
 </html>
