@@ -1,48 +1,127 @@
-// --- 修正・追加部分 ---
-const SERVER_URL = "https://xxxx-xxxx.ngrok.io"; // Colabで表示されたURLに書き換えてください
-let isProcessing = false; // 通信中の重複送信防止
-
-async function sendImageToServer(base64Image) {
-    if (isProcessing) return;
-    isProcessing = true;
-
-    try {
-        const response = await fetch(`${SERVER_URL}/predict`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: base64Image })
-        });
-        const data = await response.json();
-
-        if (data.success && data.digit) {
-            const num = parseFloat(data.digit);
-            if (!isNaN(num)) {
-                weightDiv.innerText = num.toFixed(1);
-                checkWeightDiff(num); // 既存の重量差チェックロジックへ
-            }
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scale OCR - Decimal Enhanced</title>
+    <script src="https://unpkg.com/tesseract.js@v4.1.0/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: #fff; padding: 20px; margin: 0; }
+        #container { position: relative; display: inline-block; background: #000; border-radius: 8px; overflow: hidden; }
+        video { width: 100%; max-width: 640px; display: block; }
+        #guide {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 280px; height: 100px; border: 3px solid #00ff00; pointer-events: none; z-index: 10;
         }
-    } catch (error) {
-        console.error("サーバー通信エラー:", error);
-    } finally {
-        isProcessing = false;
-    }
-}
+        .controls { background: #222; padding: 15px; border-radius: 8px; margin: 10px auto; max-width: 500px; text-align: left; }
+        canvas { border: 2px solid #00ff00; margin-top: 10px; width: 280px; height: 100px; image-rendering: pixelated; }
+        #result { font-size: 5rem; font-weight: bold; color: #00ff00; font-family: monospace; margin: 20px 0; }
+        button { background: #e67e22; color: white; border: none; padding: 20px; border-radius: 8px; cursor: pointer; font-size: 1.5rem; width: 100%; font-weight: bold; }
+    </style>
+</head>
+<body>
 
-// 既存のloop()関数内を書き換え
-function loop() {
-    if (video.paused || video.ended) return;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    <h2>秤OCR（小数点強制認識）</h2>
     
-    // クロップ処理（既存と同じ）
-    canvas.width = 300; canvas.height = 120;
-    const scale = video.videoWidth / video.clientWidth;
-    const sw = 300 * scale; const sh = 120 * scale;
-    const sx = (video.videoWidth - sw) / 2; const sy = (video.videoHeight - sh) / 2;
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 300, 120);
+    <div id="container">
+        <video id="video" autoplay playsinline></video>
+        <div id="guide"></div>
+    </div>
 
-    // 画像をサーバーへ送信（0.5秒おきなど間隔を空けると安定します）
-    const base64Image = canvas.toDataURL('image/png');
-    sendImageToServer(base64Image);
+    <div class="controls">
+        <label>しきい値: <span id="thresh-val">128</span></label>
+        <input type="range" id="threshold" min="0" max="255" value="128">
+        <label><input type="checkbox" id="invert"> 白黒反転</label>
+        <button id="capture-btn">数字を読み取る</button>
+    </div>
 
-    requestAnimationFrame(loop);
-}
+    <p>OCR用画像（ドットを太らせています）:</p>
+    <canvas id="canvas"></canvas>
+
+    <div id="result">---</div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const resultDiv = document.getElementById('result');
+        const captureBtn = document.getElementById('capture-btn');
+        const threshInput = document.getElementById('threshold');
+        const invertCheck = document.getElementById('invert');
+
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } } }).then(s => video.srcObject = s);
+
+        function processFrame() {
+            if (video.paused || video.ended) return;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            const scaleX = video.videoWidth / video.clientWidth;
+            const scaleY = video.videoHeight / video.clientHeight;
+            const w = 280 * scaleX; const h = 100 * scaleY;
+            const x = (video.videoWidth - w) / 2; const y = (video.videoHeight - h) / 2;
+
+            canvas.width = 280; canvas.height = 100;
+            ctx.drawImage(video, x, y, w, h, 0, 0, 280, 100);
+
+            const imageData = ctx.getImageData(0, 0, 280, 100);
+            const data = imageData.data;
+            const threshold = parseInt(threshInput.value);
+            const isInverted = invertCheck.checked;
+
+            // 1. 二値化
+            let binary = new Uint8Array(280 * 100);
+            for (let i = 0; i < data.length; i += 4) {
+                const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                let val = avg >= threshold ? 255 : 0;
+                if (isInverted) val = 255 - val;
+                binary[i / 4] = val;
+            }
+
+            // 2. 簡易的な膨張処理（Dilation）: ドットを太らせる
+            const output = ctx.createImageData(280, 100);
+            for (let y = 1; y < 99; y++) {
+                for (let x = 1; x < 279; x++) {
+                    const idx = y * 280 + x;
+                    // 周囲1ピクセルに「黒」があれば自分も「黒」にする（文字が黒の場合）
+                    // ここではOCRエンジン用に「白背景・黒文字」を前提とします
+                    let minVal = binary[idx];
+                    if (binary[idx-1] === 0 || binary[idx+1] === 0 || binary[idx-280] === 0 || binary[idx+280] === 0) {
+                        minVal = 0;
+                    }
+                    const outIdx = idx * 4;
+                    output.data[outIdx] = output.data[outIdx+1] = output.data[outIdx+2] = minVal;
+                    output.data[outIdx+3] = 255;
+                }
+            }
+            ctx.putImageData(output, 0, 0);
+            document.getElementById('thresh-val').innerText = threshold;
+            requestAnimationFrame(processFrame);
+        }
+        video.addEventListener('play', processFrame);
+
+        let worker = null;
+        async function getOCR() {
+            if (!worker) {
+                worker = await Tesseract.createWorker();
+                await worker.loadLanguage('eng');
+                await worker.initialize('eng');
+                await worker.setParameters({
+                    tessedit_char_whitelist: '0123456789.',
+                    tessedit_pageseg_mode: '7',
+                    // 小数点の認識感度を上げるための内部設定
+                    tessedit_create_boxfile: '1',
+                });
+            }
+            return worker;
+        }
+
+        captureBtn.addEventListener('click', async () => {
+            captureBtn.disabled = true;
+            resultDiv.innerText = "...";
+            const currentWorker = await getOCR();
+            const { data: { text } } = await currentWorker.recognize(canvas);
+            const cleanText = text.replace(/[^0-9.]/g, '').trim();
+            resultDiv.innerText = cleanText || "Error";
+            captureBtn.disabled = false;
+        });
+    </script>
+</body>
+</html>
