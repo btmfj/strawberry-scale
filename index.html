@@ -3,38 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>イチゴ・スベリー計 V1.00</title>
+    <title>イチゴ・スベリー計 V1.20</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #fdf2f4; margin: 0; padding: 20px; }
-        .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        h1 { color: #e91e63; font-size: 1.5rem; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h1 { color: #ff4757; font-size: 1.8rem; margin-bottom: 5px; }
+        .version { font-size: 0.8rem; color: #999; margin-bottom: 15px; }
         
-        #video-container { position: relative; width: 100%; max-width: 400px; margin: auto; overflow: hidden; border-radius: 10px; }
-        video { width: 100%; display: block; }
-        /* 秤の数字を囲む緑枠 */
+        /* カメラ・ガイド枠 */
+        #video-container { position: relative; width: 100%; aspect-ratio: 4/3; margin: auto; overflow: hidden; border-radius: 15px; background: #000; }
+        video { width: 100%; height: 100%; object-fit: cover; }
         #guide-box {
             position: absolute; top: 50%; left: 50%;
-            width: 60%; height: 30%;
-            border: 3px solid #00ff00;
+            width: 70%; height: 25%;
+            border: 3px solid #2ed573;
             transform: translate(-50%, -50%);
-            box-shadow: 0 0 0 1000px rgba(0,0,0,0.5); /* 枠外を暗くする */
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
+            border-radius: 5px;
             pointer-events: none;
         }
 
-        .monitor-section { margin-top: 20px; padding: 10px; border-top: 2px dashed #ffc107; }
-        canvas { width: 100%; max-width: 200px; border: 1px solid #333; background: #000; }
+        /* コントロールパネル */
+        .controls { margin: 20px 0; background: #f1f2f6; padding: 15px; border-radius: 12px; }
+        input[type="range"] { width: 90%; height: 10px; cursor: pointer; }
+        .threshold-label { font-weight: bold; color: #57606f; display: block; margin-bottom: 8px; }
+
+        /* モニターセクション */
+        .monitor-section { margin-top: 20px; padding: 15px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
+        canvas { width: 100%; max-width: 250px; border: 2px solid #333; background: #000; border-radius: 5px; }
         
-        .controls { margin: 20px 0; background: #eee; padding: 15px; border-radius: 10px; }
-        input[type="range"] { width: 80%; }
+        /* 結果表示 */
+        #result-area { margin-top: 15px; min-height: 100px; }
+        #weight-display { font-size: 1.2rem; color: #747d8c; }
+        #size-display { font-size: 4.5rem; font-weight: bold; color: #ff4757; line-height: 1; margin: 10px 0; }
         
-        .status-badge { display: inline-block; padding: 5px 10px; border-radius: 5px; background: #333; color: white; font-size: 0.8rem; margin-bottom: 10px; }
+        .api-status { font-size: 0.7rem; margin-top: 10px; color: #2ed573; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h1>🍓 イチゴ・スベリー計</h1>
-    <div class="status-badge">Version 1.00</div>
+    <div class="version">Version 1.20</div>
 
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
@@ -42,81 +52,169 @@
     </div>
 
     <div class="controls">
-        <label>2値化しきい値: <span id="threshold-val">128</span></label><br>
+        <label class="threshold-label">2値化しきい値: <span id="threshold-val">128</span></label>
         <input type="range" id="threshold-slider" min="0" max="255" value="128">
-        <p style="font-size: 0.8rem; color: #666;">※数字がハッキリ白くなるよう調整してください</p>
     </div>
 
     <div class="monitor-section">
-        <h3>現在の読み取りモニター</h3>
+        <div style="font-size: 0.9rem; margin-bottom: 5px; font-weight: bold;">OCR読み取りモニター</div>
         <canvas id="monitor-canvas"></canvas>
-        <div id="result-display" style="font-size: 2rem; font-weight: bold; color: #e91e63;">-- g</div>
+        
+        <div id="result-area">
+            <div id="weight-display">現在: -- g</div>
+            <div id="size-display">--</div>
+            <div id="api-indicator" class="api-status">● サーバー待機中...</div>
+        </div>
     </div>
 </div>
 
 <script>
+    // --- 基本設定 ---
+    const API_URL = "https://strawberry-backend-2rxg.onrender.com/ocr";
+    const STABILITY_COUNT = 3; // 3回連続一致で確定
+    
     const video = document.getElementById('video');
     const monitorCanvas = document.getElementById('monitor-canvas');
     const ctx = monitorCanvas.getContext('2d', { willReadFrequently: true });
     const thresholdSlider = document.getElementById('threshold-slider');
     const thresholdVal = document.getElementById('threshold-val');
+    const apiIndicator = document.getElementById('api-indicator');
 
-    // カメラ起動
+    let lastStableWeight = 0;
+    let weightHistory = [];
+    let isProcessing = false;
+
+    // サイズ判定ロジック
+    function getSize(grams) {
+        if (grams >= 40) return "4L";
+        if (grams >= 30) return "3L";
+        if (grams >= 20) return "2L";
+        if (grams >= 15) return "L";
+        if (grams >= 10) return "M";
+        if (grams >= 5)  return "S";
+        return null;
+    }
+
+    // カメラ初期化
     async function initCamera() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" }, 
+                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, 
                 audio: false 
             });
             video.srcObject = stream;
         } catch (err) {
-            alert("カメラの起動に失敗しました。HTTPS接続か確認してください。");
+            alert("カメラを起動できません。HTTPS環境かつ許可設定を確認してください。");
         }
     }
 
-    // 画像処理（グレースケール＋2値化）
-    function processImage() {
+    // 映像処理 loop
+    function processFrame() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             const vW = video.videoWidth;
             const vH = video.videoHeight;
             
-            // 枠内のサイズ計算（中央の60%x30%）
-            const cropW = vW * 0.6;
-            const cropH = vH * 0.3;
+            // 枠内切り出し (中央の70%x25%)
+            const cropW = vW * 0.7;
+            const cropH = vH * 0.25;
             const cropX = (vW - cropW) / 2;
             const cropY = (vH - cropH) / 2;
 
             monitorCanvas.width = cropW;
             monitorCanvas.height = cropH;
 
-            // 元画像をCanvasに描画
+            // 描画と2値化
             ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-            // ピクセルデータの取得
             const imageData = ctx.getImageData(0, 0, cropW, cropH);
             const data = imageData.data;
             const threshold = parseInt(thresholdSlider.value);
 
             for (let i = 0; i < data.length; i += 4) {
-                // 輝度計算 (簡易版)
                 const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                // しきい値より明るければ白、暗ければ黒
                 const val = avg >= threshold ? 255 : 0;
                 data[i] = data[i+1] = data[i+2] = val;
             }
             ctx.putImageData(imageData, 0, 0);
         }
-        requestAnimationFrame(processImage);
+        requestAnimationFrame(processFrame);
     }
 
-    thresholdSlider.oninput = () => { thresholdVal.innerText = thresholdSlider.value; };
+    // API送信
+    async function uploadToOCR() {
+        if (isProcessing || video.paused) return;
+        isProcessing = true;
+        apiIndicator.innerText = "● 送信中...";
+        apiIndicator.style.color = "#ffa502";
 
+        monitorCanvas.toBlob(async (blob) => {
+            const formData = new FormData();
+            formData.append('file', blob, 'digit.png');
+
+            try {
+                const response = await fetch(API_URL, { method: 'POST', body: formData });
+                const data = await response.json();
+                
+                if (data.number) {
+                    apiIndicator.innerText = "● 接続中";
+                    apiIndicator.style.color = "#2ed573";
+                    handleWeightResult(parseFloat(data.number));
+                } else {
+                    apiIndicator.innerText = "● 読取不能";
+                    apiIndicator.style.color = "#ff4757";
+                }
+            } catch (err) {
+                apiIndicator.innerText = "● サーバーエラー";
+                apiIndicator.style.color = "#ff4757";
+            } finally {
+                isProcessing = false;
+            }
+        }, 'image/png');
+    }
+
+    // 重量判定
+    function handleWeightResult(currentWeight) {
+        if (isNaN(currentWeight)) return;
+        document.getElementById('weight-display').innerText = `現在: ${currentWeight.toFixed(1)} g`;
+
+        weightHistory.push(currentWeight);
+        if (weightHistory.length > STABILITY_COUNT) weightHistory.shift();
+
+        const isStable = weightHistory.length === STABILITY_COUNT && 
+                         weightHistory.every(v => v === weightHistory[0]);
+
+        if (isStable) {
+            const stableWeight = weightHistory[0];
+            const diff = lastStableWeight - stableWeight;
+
+            // イチゴが取り出された（5g以上減った）時
+            if (diff >= 5) {
+                const size = getSize(diff);
+                if (size) {
+                    speakSize(size);
+                    document.getElementById('size-display').innerText = size;
+                }
+            }
+            lastStableWeight = stableWeight;
+        }
+    }
+
+    // 音声読み上げ
+    function speakSize(text) {
+        const uttr = new SpeechSynthesisUtterance(text);
+        uttr.lang = 'ja-JP';
+        uttr.rate = 1.2; // 少し早口でレスポンス感アップ
+        window.speechSynthesis.speak(uttr);
+    }
+
+    // イベント設定
+    thresholdSlider.oninput = () => { thresholdVal.innerText = thresholdSlider.value; };
+    
     initCamera();
     video.addEventListener('play', () => {
-        processImage();
-        // ここで0.1秒ごとのAPI送信タイマーを後ほど実装します
+        processFrame();
+        setInterval(uploadToOCR, 100); // 0.1秒おきにOCR
     });
-</script>
 
+</script>
 </body>
 </html>
