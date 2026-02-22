@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ・スベリー計 V1.60</title>
+    <title>イチゴ・スベリー計 V1.70</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 10px; }
         .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
@@ -20,53 +20,56 @@
             pointer-events: none;
         }
 
-        .controls-grid { 
-            display: grid; 
-            grid-template-columns: 1fr 1fr; 
-            gap: 10px; 
-            margin: 15px 0; 
-            padding: 10px; 
-            background: #f1f2f6; 
-            border-radius: 12px; 
+        .settings-panel { 
+            margin: 15px 0; padding: 12px; background: #f1f2f6; border-radius: 12px; text-align: left;
         }
-        .full-width { grid-column: span 2; }
-        
+        .radio-group { display: flex; justify-content: space-around; margin-bottom: 10px; font-weight: bold; color: #333; }
+        .radio-group label { background: white; padding: 8px 15px; border-radius: 20px; cursor: pointer; border: 2px solid transparent; }
+        input[type="radio"]:checked + span { color: #ff4757; }
+        input[type="radio"] { display: none; }
+        .selected-label { border: 2px solid #ff4757 !important; color: #ff4757; }
+
         .btn-light { 
-            background: #ffa502; border: none; color: white; padding: 10px; 
-            border-radius: 8px; font-weight: bold; cursor: pointer;
+            width: 100%; background: #ffa502; border: none; color: white; padding: 12px; 
+            border-radius: 8px; font-weight: bold; cursor: pointer; margin-bottom: 10px;
         }
         .btn-light.active { background: #ff4757; box-shadow: 0 0 10px #ff4757; }
 
-        .slider-box { text-align: left; font-size: 0.8rem; }
+        .slider-box { font-size: 0.8rem; margin-top: 5px; }
         input[type="range"] { width: 100%; }
 
         .monitor-section { margin-top: 10px; padding: 10px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
         canvas { width: 100%; background: #000; border-radius: 5px; }
         
-        #size-display { font-size: 7rem; font-weight: bold; color: #ff4757; margin: 0; line-height: 1; }
-        #weight-text { font-size: 1.6rem; font-weight: bold; color: #333; }
-        #debug-log { font-size: 0.7rem; color: #888; margin-top: 5px; }
+        #size-display { font-size: 7.5rem; font-weight: bold; color: #ff4757; margin: 0; line-height: 1; }
+        #weight-text { font-size: 1.8rem; font-weight: bold; color: #333; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>🍓 イチゴ・スベリー計 V1.60</h1>
+    <h1>🍓 イチゴ・スベリー計 V1.70</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
         <div id="guide-box"></div>
     </div>
 
-    <div class="controls-grid">
-        <button id="light-btn" class="btn-light full-width">🔦 ライト点灯 / 消灯</button>
+    <div class="settings-panel">
+        <div class="radio-group">
+            <label id="label-int" class="selected-label">
+                <input type="radio" name="scale_type" value="integer" checked onchange="updateUI()"> 整数表示
+            </label>
+            <label id="label-dec">
+                <input type="radio" name="scale_type" value="decimal" onchange="updateUI()"> 小数点(0.1)表示
+            </label>
+        </div>
+
+        <button id="light-btn" class="btn-light">🔦 ライト点灯 / 消灯</button>
         
         <div class="slider-box">
-            <label>🔍 ズーム</label>
+            <label>🔍 ズーム / 🌓 しきい値</label>
             <input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.5">
-        </div>
-        <div class="slider-box">
-            <label>🌓 しきい値</label>
             <input type="range" id="threshold-slider" min="0" max="255" value="130">
         </div>
     </div>
@@ -75,7 +78,7 @@
         <canvas id="monitor-canvas"></canvas>
         <div id="size-display">--</div>
         <div id="weight-text">読取中...</div>
-        <div id="debug-log">準備完了</div>
+        <div id="debug-log" style="font-size:0.7rem; color:#888;">設定を合わせてください</div>
     </div>
 </div>
 
@@ -87,16 +90,21 @@
     const thresholdSlider = document.getElementById('threshold-slider');
     const zoomSlider = document.getElementById('zoom-slider');
     const lightBtn = document.getElementById('light-btn');
-    const debugLog = document.getElementById('debug-log');
     const sizeDisplay = document.getElementById('size-display');
     const weightText = document.getElementById('weight-text');
+    const debugLog = document.getElementById('debug-log');
 
-    let videoStream = null;
     let track = null;
     let lightOn = false;
     let lastStableWeight = 0;
     let weightHistory = [];
     let isProcessing = false;
+
+    function updateUI() {
+        const type = document.querySelector('input[name="scale_type"]:checked').value;
+        document.getElementById('label-int').className = type === 'integer' ? 'selected-label' : '';
+        document.getElementById('label-dec').className = type === 'decimal' ? 'selected-label' : '';
+    }
 
     function getSize(grams) {
         if (grams >= 40) return "4L";
@@ -110,45 +118,28 @@
 
     async function initCamera() {
         try {
-            videoStream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" } 
-            });
-            video.srcObject = videoStream;
-            track = videoStream.getVideoTracks()[0];
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = stream;
+            track = stream.getVideoTracks()[0];
         } catch (err) { weightText.innerText = "カメラエラー"; }
     }
 
-    // ライト制御関数
     lightBtn.onclick = async () => {
         if (!track) return;
-        try {
-            lightOn = !lightOn;
-            await track.applyConstraints({
-                advanced: [{ torch: lightOn }]
-            });
-            lightBtn.classList.toggle('active', lightOn);
-        } catch (err) {
-            alert("この端末はライト制御に対応していない可能性があります。");
-        }
+        lightOn = !lightOn;
+        try { await track.applyConstraints({ advanced: [{ torch: lightOn }] }); lightBtn.classList.toggle('active', lightOn); } catch(e) {}
     };
 
     function processFrame() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             const zoom = parseFloat(zoomSlider.value);
-            const vW = video.videoWidth;
-            const vH = video.videoHeight;
-            const cropW = (vW * 0.7) / zoom;
-            const cropH = (vH * 0.25) / zoom;
-            const cropX = (vW - cropW) / 2;
-            const cropY = (vH - cropH) / 2;
-
-            monitorCanvas.width = cropW;
-            monitorCanvas.height = cropH;
+            const vW = video.videoWidth; const vH = video.videoHeight;
+            const cropW = (vW * 0.7) / zoom; const cropH = (vH * 0.25) / zoom;
+            const cropX = (vW - cropW) / 2; const cropY = (vH - cropH) / 2;
+            monitorCanvas.width = cropW; monitorCanvas.height = cropH;
             ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-            
             const imageData = ctx.getImageData(0, 0, cropW, cropH);
-            const data = imageData.data;
-            const th = parseInt(thresholdSlider.value);
+            const data = imageData.data; const th = parseInt(thresholdSlider.value);
             for (let i = 0; i < data.length; i += 4) {
                 const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
                 const val = brightness >= th ? 255 : 0;
@@ -162,15 +153,19 @@
     async function uploadToOCR() {
         if (isProcessing || video.paused) return;
         isProcessing = true;
+        const scaleType = document.querySelector('input[name="scale_type"]:checked').value;
+
         monitorCanvas.toBlob(async (blob) => {
             const formData = new FormData();
             formData.append('file', blob, 'digit.png');
+            formData.append('scale_type', scaleType); // 秤の種類を送信
+
             try {
                 const response = await fetch(API_URL, { method: 'POST', body: formData });
                 const data = await response.json();
-                if (data.number) {
-                    debugLog.innerText = "受信: " + data.number;
-                    handleWeight(parseInt(data.number));
+                if (data.number !== undefined && data.number !== null) {
+                    debugLog.innerText = "Raw: " + data.raw;
+                    handleWeight(data.number);
                 }
             } catch (err) { debugLog.innerText = "通信中..."; }
             finally { isProcessing = false; }
@@ -178,15 +173,16 @@
     }
 
     function handleWeight(weight) {
-        weightText.innerText = weight + " g";
+        // 表示を更新 (小数点表示なら小数点第一位まで)
+        const type = document.querySelector('input[name="scale_type"]:checked').value;
+        weightText.innerText = (type === 'decimal' ? weight.toFixed(1) : Math.floor(weight)) + " g";
+
         weightHistory.push(weight);
         if (weightHistory.length > 3) weightHistory.shift();
         
-        // 安定判定
         if (weightHistory.length === 3 && weightHistory.every(v => v === weightHistory[0])) {
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
-            // 減少を検知（イチゴを取り出した）
             if (diff >= 5 && diff <= 100) {
                 const size = getSize(diff);
                 if (size) {
@@ -201,10 +197,7 @@
     }
 
     initCamera();
-    video.addEventListener('play', () => {
-        processFrame();
-        setInterval(uploadToOCR, 400); 
-    });
+    video.addEventListener('play', () => { processFrame(); setInterval(uploadToOCR, 400); });
 </script>
 </body>
 </html>
