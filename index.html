@@ -2,46 +2,57 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>イチゴ・スベリー計 V1.31</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>イチゴ・スベリー計 V1.32</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 10px; }
-        .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 20px; }
-        #video-container { position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden; border-radius: 10px; background: #000; }
+        body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 10px; overflow-x: hidden; }
+        .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        h1 { color: #ff4757; font-size: 1.4rem; margin: 5px 0; }
+        
+        #video-container { position: relative; width: 100%; aspect-ratio: 4/3; overflow: hidden; border-radius: 10px; background: #000; }
         video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* 枠を赤くして「ここに入れて！」感を出す */
         #guide-box {
             position: absolute; top: 50%; left: 50%;
-            width: 60%; height: 40%;
-            border: 4px solid #00ff00;
+            width: 70%; height: 25%;
+            border: 4px solid #ff4757;
             transform: translate(-50%, -50%);
-            box-shadow: 0 0 0 1000px rgba(0,0,0,0.7);
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
             pointer-events: none;
         }
-        .controls { margin: 15px 0; background: #f1f2f6; padding: 10px; border-radius: 12px; }
-        canvas { width: 100%; background: #000; border-radius: 5px; margin-top: 10px; }
-        #size-display { font-size: 6rem; font-weight: bold; color: #ff4757; margin: 10px 0; line-height: 1; }
-        #debug-info { font-size: 0.8rem; color: #666; background: #eee; padding: 5px; border-radius: 5px; margin-top: 5px; }
+
+        .monitor-section { margin-top: 10px; padding: 10px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
+        canvas { width: 100%; background: #000; border-radius: 5px; }
+        
+        #size-display { font-size: 6rem; font-weight: bold; color: #ff4757; margin: 0; line-height: 1; text-shadow: 2px 2px 0 #fff; }
+        #weight-text { font-size: 1.4rem; font-weight: bold; color: #333; margin-top: 5px; }
+        #debug-log { font-size: 0.7rem; color: #888; margin-top: 10px; height: 1.2em; }
+        
+        .slider-box { margin: 15px 0; padding: 10px; background: #f1f2f6; border-radius: 10px; }
+        input[type="range"] { width: 80%; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>🍓 イチゴ・スベリー計</h1>
+    <h1>🍓 イチゴ・スベリー計 V1.32</h1>
+    
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
         <div id="guide-box"></div>
     </div>
 
-    <div class="controls">
-        <label style="font-size:0.8rem;">しきい値調整（数字を太くハッキリ）</label><br>
-        <input type="range" id="threshold-slider" min="0" max="255" value="128">
+    <div class="slider-box">
+        <label style="font-size:0.8rem; font-weight:bold;">しきい値調整（数字を白く太く！）</label><br>
+        <input type="range" id="threshold-slider" min="0" max="255" value="130">
     </div>
 
-    <div style="background:#fffcf0; padding:10px; border-radius:15px; border:2px solid #ffa502;">
+    <div class="monitor-section">
         <canvas id="monitor-canvas"></canvas>
         <div id="size-display">--</div>
-        <div id="weight-text" style="font-size:1.2rem; font-weight:bold;">秤の数値: -- g</div>
-        <div id="debug-info">サーバー応答を待機中...</div>
+        <div id="weight-text">準備中...</div>
+        <div id="debug-log">サーバー接続を待機しています</div>
     </div>
 </div>
 
@@ -51,7 +62,7 @@
     const monitorCanvas = document.getElementById('monitor-canvas');
     const ctx = monitorCanvas.getContext('2d', { willReadFrequently: true });
     const thresholdSlider = document.getElementById('threshold-slider');
-    const debugInfo = document.getElementById('debug-info');
+    const debugLog = document.getElementById('debug-log');
     const sizeDisplay = document.getElementById('size-display');
     const weightText = document.getElementById('weight-text');
 
@@ -59,7 +70,6 @@
     let weightHistory = [];
     let isProcessing = false;
 
-    // サイズ判定
     function getSize(grams) {
         if (grams >= 40) return "4L";
         if (grams >= 31) return "3L";
@@ -72,30 +82,41 @@
 
     async function initCamera() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" } 
-            });
+            const constraints = {
+                video: { 
+                    facingMode: "environment",
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             video.srcObject = stream;
-        } catch (err) { alert("カメラエラー"); }
+        } catch (err) {
+            weightText.innerText = "カメラエラー";
+        }
     }
 
     function processFrame() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             const vW = video.videoWidth;
             const vH = video.videoHeight;
-            const cropW = vW * 0.6;
-            const cropH = vH * 0.4;
+            const cropW = vW * 0.7;
+            const cropH = vH * 0.25;
             const cropX = (vW - cropW) / 2;
             const cropY = (vH - cropH) / 2;
+            
             monitorCanvas.width = cropW;
             monitorCanvas.height = cropH;
+            
             ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            
             const imageData = ctx.getImageData(0, 0, cropW, cropH);
             const data = imageData.data;
             const th = parseInt(thresholdSlider.value);
+            
             for (let i = 0; i < data.length; i += 4) {
-                const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                const val = avg >= th ? 255 : 0;
+                const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
+                const val = brightness >= th ? 255 : 0;
                 data[i] = data[i+1] = data[i+2] = val;
             }
             ctx.putImageData(imageData, 0, 0);
@@ -106,6 +127,7 @@
     async function uploadToOCR() {
         if (isProcessing || video.paused) return;
         isProcessing = true;
+        
         monitorCanvas.toBlob(async (blob) => {
             const formData = new FormData();
             formData.append('file', blob, 'digit.png');
@@ -113,22 +135,28 @@
                 const response = await fetch(API_URL, { method: 'POST', body: formData });
                 const data = await response.json();
                 if (data.number) {
-                    debugInfo.innerText = "受信中: " + data.number;
+                    debugLog.innerText = "受信結果: " + data.number;
                     handleWeight(parseInt(data.number));
+                } else {
+                    debugLog.innerText = "数字を読み取れません...";
                 }
-            } catch (err) { debugInfo.innerText = "通信中..."; }
-            finally { isProcessing = false; }
+            } catch (err) {
+                debugLog.innerText = "通信中...";
+            } finally {
+                isProcessing = false;
+            }
         }, 'image/png');
     }
 
     function handleWeight(weight) {
-        weightText.innerText = `秤の数値: ${weight} g`;
+        weightText.innerText = weight + " g";
         weightHistory.push(weight);
         if (weightHistory.length > 3) weightHistory.shift();
+        
         if (weightHistory.length === 3 && weightHistory.every(v => v === weightHistory[0])) {
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
-            if (diff >= 5) {
+            if (diff >= 5 && diff <= 100) { // 異常な数値を除外
                 const size = getSize(diff);
                 if (size) {
                     sizeDisplay.innerText = size;
@@ -144,7 +172,7 @@
     initCamera();
     video.addEventListener('play', () => {
         processFrame();
-        setInterval(uploadToOCR, 250); 
+        setInterval(uploadToOCR, 300); // 0.3秒間隔でチェック
     });
 </script>
 </body>
