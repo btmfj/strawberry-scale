@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>いちご選別くん V1.94</title>
+    <title>いちご選別くん V1.95</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 5px; overflow-y: auto; }
         .container { max-width: 450px; margin: auto; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
@@ -44,7 +44,7 @@
 <div id="flash-overlay"></div>
 
 <div class="container">
-    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.94</h1>
+    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.95</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline muted></video>
@@ -68,7 +68,7 @@
     <div class="monitor-section">
         <canvas id="monitor-canvas"></canvas>
         <div id="weight-text">-- g</div>
-        <div id="debug-log">⚠️ ここをタップして開始 ⚠️</div>
+        <div id="debug-log">音声ロード中...</div>
     </div>
 </div>
 
@@ -80,29 +80,34 @@
         "M":  { color: "#0984e3" }, "S":  { color: "#d63031" }
     };
 
-    const audioFiles = {};
+    const audioCache = {};
     let audioEnabled = false;
 
-    // 事前にサイズ音声をロード
-    Object.keys(SIZES).forEach(size => {
-        audioFiles[size] = new Audio(`${AUDIO_BASE_URL}${size.toLowerCase()}.mp3`);
-    });
-
-    // スタート音声用
-    const startAudio = new Audio(`${AUDIO_BASE_URL}start.mp3`);
+    // --- 音声ファイルをメモリに完全に読み込む関数 ---
+    async function preloadAudios() {
+        const loadTasks = Object.keys(SIZES).concat(['start']).map(async (key) => {
+            const fileName = key === 'start' ? 'start.mp3' : `${key.toLowerCase()}.mp3`;
+            try {
+                const response = await fetch(AUDIO_BASE_URL + fileName);
+                const blob = await response.blob();
+                audioCache[key] = new Audio(URL.createObjectURL(blob));
+                audioCache[key].load(); // メモリに常駐させる
+            } catch (e) {
+                console.error("Failed to load:", fileName);
+            }
+        });
+        await Promise.all(loadTasks);
+        document.getElementById('debug-log').innerText = "⚠️ ここをタップして開始 ⚠️";
+    }
 
     document.body.addEventListener('click', () => {
-        if (!audioEnabled) {
-            // start.mp3 を再生して権限を取得
-            startAudio.play().then(() => {
+        if (!audioEnabled && audioCache['start']) {
+            audioCache['start'].play().then(() => {
                 audioEnabled = true;
                 document.getElementById('debug-log').innerText = "🔊 音声有効";
                 document.getElementById('debug-log').style.color = "#2ed573";
                 document.getElementById('debug-log').style.borderColor = "#2ed573";
-            }).catch(e => {
-                console.log("Audio Error:", e);
-                document.getElementById('debug-log').innerText = "音声再生に失敗";
-            });
+            }).catch(e => console.log("Init audio error:", e));
         }
     }, { once: true });
 
@@ -186,6 +191,7 @@
         if (weightHistory.length === 3 && weightHistory.every(v => v === weightHistory[0])) {
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
+            // 変化量が5g〜100gの場合にサイズ判定
             if (diff >= 5 && diff <= 100) {
                 const size = determineSize(diff);
                 if (size) triggerVisualAudio(size);
@@ -208,13 +214,19 @@
         overlay.innerText = size;
         overlay.style.backgroundColor = SIZES[size].color;
         overlay.style.display = 'flex';
-        if (audioEnabled && audioFiles[size]) {
-            audioFiles[size].currentTime = 0;
-            audioFiles[size].play().catch(e => {});
+        
+        // メモリ上の音声を即座に再生
+        if (audioEnabled && audioCache[size]) {
+            audioCache[size].pause(); // 前の音が鳴っていたら止める
+            audioCache[size].currentTime = 0;
+            audioCache[size].play().catch(e => console.error(e));
         }
+        
         setTimeout(() => { overlay.style.display = 'none'; }, 1000);
     }
 
+    // 起動時にロード開始
+    preloadAudios();
     initCamera();
     video.addEventListener('play', () => { processFrame(); setInterval(uploadToOCR, 450); });
 </script>
