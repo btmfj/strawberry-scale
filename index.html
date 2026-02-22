@@ -3,44 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>イチゴ・スベリー計 V1.22</title>
+    <title>イチゴ・スベリー計 V1.30</title>
     <style>
-        body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 20px; color: #333; }
-        .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-        h1 { color: #ff4757; font-size: 1.8rem; margin-bottom: 5px; }
-        .version { font-size: 0.8rem; color: #999; margin-bottom: 15px; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 10px; color: #333; }
+        .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h1 { color: #ff4757; font-size: 1.5rem; margin: 5px 0; }
+        .version { font-size: 0.7rem; color: #999; }
         
-        #video-container { position: relative; width: 100%; aspect-ratio: 4/3; margin: auto; overflow: hidden; border-radius: 15px; background: #000; }
+        #video-container { position: relative; width: 100%; aspect-ratio: 1/1; margin: 10px auto; overflow: hidden; border-radius: 15px; background: #000; }
         video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* 読み取り枠をより細長く、秤に合わせやすく */
         #guide-box {
             position: absolute; top: 50%; left: 50%;
-            width: 70%; height: 25%;
-            border: 3px solid #2ed573;
+            width: 80%; height: 20%;
+            border: 3px solid #00ff00;
             transform: translate(-50%, -50%);
-            box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
-            border-radius: 5px;
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.7);
+            border-radius: 2px;
             pointer-events: none;
         }
 
-        .controls { margin: 20px 0; background: #f1f2f6; padding: 15px; border-radius: 12px; }
-        input[type="range"] { width: 90%; height: 10px; cursor: pointer; }
-        .threshold-label { font-weight: bold; color: #57606f; display: block; margin-bottom: 8px; }
+        .controls { margin: 15px 0; background: #f1f2f6; padding: 10px; border-radius: 12px; }
+        input[type="range"] { width: 90%; cursor: pointer; }
+        .threshold-label { font-size: 0.9rem; font-weight: bold; color: #57606f; }
 
-        .monitor-section { margin-top: 20px; padding: 15px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
-        canvas { width: 100%; max-width: 250px; border: 2px solid #333; background: #000; border-radius: 5px; }
+        .monitor-section { padding: 10px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
+        canvas { width: 100%; background: #000; border-radius: 5px; image-rendering: pixelated; }
         
-        #result-area { margin-top: 15px; min-height: 100px; }
-        #weight-display { font-size: 1.2rem; color: #747d8c; }
-        #size-display { font-size: 4.5rem; font-weight: bold; color: #ff4757; line-height: 1; margin: 10px 0; }
-        
-        .api-status { font-size: 0.8rem; margin-top: 10px; padding: 8px; border-radius: 5px; background: #eee; min-height: 1.2em; word-break: break-all; }
+        #result-area { margin-top: 10px; }
+        #weight-display { font-size: 1rem; color: #747d8c; }
+        #size-display { font-size: 5rem; font-weight: bold; color: #ff4757; margin: 0; }
+        .api-status { font-size: 0.75rem; color: #2ed573; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h1>🍓 イチゴ・スベリー計</h1>
-    <div class="version">Version 1.22 (Long Timeout)</div>
+    <div class="version">Version 1.30 (Precision Up)</div>
 
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
@@ -48,18 +49,16 @@
     </div>
 
     <div class="controls">
-        <label class="threshold-label">2値化しきい値: <span id="threshold-val">128</span></label>
+        <label class="threshold-label">しきい値(数字をクッキリ): <span id="threshold-val">128</span></label>
         <input type="range" id="threshold-slider" min="0" max="255" value="128">
     </div>
 
     <div class="monitor-section">
-        <div style="font-size: 0.9rem; margin-bottom: 5px; font-weight: bold;">OCR読み取りモニター</div>
         <canvas id="monitor-canvas"></canvas>
-        
         <div id="result-area">
-            <div id="weight-display">現在: -- g</div>
+            <div id="weight-display">秤の数値: -- g</div>
             <div id="size-display">--</div>
-            <div id="api-indicator" class="api-status">準備中...</div>
+            <div id="api-indicator" class="api-status">接続待機中...</div>
         </div>
     </div>
 </div>
@@ -72,7 +71,6 @@
     const monitorCanvas = document.getElementById('monitor-canvas');
     const ctx = monitorCanvas.getContext('2d', { willReadFrequently: true });
     const thresholdSlider = document.getElementById('threshold-slider');
-    const thresholdVal = document.getElementById('threshold-val');
     const apiIndicator = document.getElementById('api-indicator');
 
     let lastStableWeight = 0;
@@ -81,24 +79,22 @@
 
     function getSize(grams) {
         if (grams >= 40) return "4L";
-        if (grams >= 30) return "3L";
-        if (grams >= 20) return "2L";
-        if (grams >= 15) return "L";
-        if (grams >= 10) return "M";
-        if (grams >= 5)  return "S";
+        if (grams >= 31) return "3L";
+        if (grams >= 21) return "2L";
+        if (grams >= 16) return "L";
+        if (grams >= 11) return "M";
+        if (grams >= 6)  return "S";
         return null;
     }
 
     async function initCamera() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, 
-                audio: false 
+                video: { facingMode: "environment", focusMode: "continuous" } 
             });
             video.srcObject = stream;
-            apiIndicator.innerText = "● サーバーの起動を確認しています...";
         } catch (err) {
-            apiIndicator.innerText = "❌ カメラエラー: " + err.name;
+            apiIndicator.innerText = "❌ カメラ起動失敗";
         }
     }
 
@@ -106,8 +102,9 @@
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             const vW = video.videoWidth;
             const vH = video.videoHeight;
-            const cropW = vW * 0.7;
-            const cropH = vH * 0.25;
+            // 枠の比率に合わせた切り出し
+            const cropW = vW * 0.8;
+            const cropH = vH * 0.2;
             const cropX = (vW - cropW) / 2;
             const cropY = (vH - cropH) / 2;
 
@@ -139,33 +136,20 @@
 
             try {
                 const controller = new AbortController();
-                // タイムアウトを30秒に設定（Renderの起動待ちのため）
-                const timeoutId = setTimeout(() => controller.abort(), 30000);
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-                const response = await fetch(API_URL, { 
-                    method: 'POST', 
-                    body: formData,
-                    signal: controller.signal
-                });
+                const response = await fetch(API_URL, { method: 'POST', body: formData, signal: controller.signal });
                 clearTimeout(timeoutId);
-
                 const data = await response.json();
                 
-                if (data.number !== undefined && data.number !== null) {
-                    apiIndicator.innerText = "● 接続中 (受信: " + data.number + ")";
-                    apiIndicator.style.color = "#2ed573";
-                    handleWeightResult(parseFloat(data.number));
+                if (data.number) {
+                    apiIndicator.innerText = "● 読取成功: " + data.number;
+                    handleWeightResult(parseInt(data.number));
                 } else {
-                    apiIndicator.innerText = "● 認識エラー: 数字が見えません";
-                    apiIndicator.style.color = "#ffa502";
+                    apiIndicator.innerText = "● 数字を探しています...";
                 }
             } catch (err) {
-                if (err.name === 'AbortError') {
-                    apiIndicator.innerText = "● サーバー起動待ち(30秒経過)。再試行中...";
-                } else {
-                    apiIndicator.innerText = "● 通信失敗: " + err.message;
-                }
-                apiIndicator.style.color = "#ff4757";
+                apiIndicator.innerText = "● サーバー通信中...";
             } finally {
                 isProcessing = false;
             }
@@ -173,8 +157,7 @@
     }
 
     function handleWeightResult(currentWeight) {
-        if (isNaN(currentWeight)) return;
-        document.getElementById('weight-display').innerText = `現在: ${currentWeight.toFixed(1)} g`;
+        document.getElementById('weight-display').innerText = `秤の数値: ${currentWeight} g`;
 
         weightHistory.push(currentWeight);
         if (weightHistory.length > STABILITY_COUNT) weightHistory.shift();
@@ -186,31 +169,26 @@
             const stableWeight = weightHistory[0];
             const diff = lastStableWeight - stableWeight;
 
+            // 5g以上の減少を検知
             if (diff >= 5) {
                 const size = getSize(diff);
                 if (size) {
-                    speakSize(size);
                     document.getElementById('size-display').innerText = size;
+                    const uttr = new SpeechSynthesisUtterance(size);
+                    uttr.lang = 'ja-JP';
+                    window.speechSynthesis.speak(uttr);
                 }
             }
             lastStableWeight = stableWeight;
         }
     }
 
-    function speakSize(text) {
-        const uttr = new SpeechSynthesisUtterance(text);
-        uttr.lang = 'ja-JP';
-        uttr.rate = 1.2;
-        window.speechSynthesis.speak(uttr);
-    }
-
-    thresholdSlider.oninput = () => { thresholdVal.innerText = thresholdSlider.value; };
+    thresholdSlider.oninput = () => { document.getElementById('threshold-val').innerText = thresholdSlider.value; };
     
     initCamera();
     video.addEventListener('play', () => {
         processFrame();
-        // サーバーが起きるまでは少し長めの間隔（2秒）でリクエストを送る
-        setInterval(uploadToOCR, 2000); 
+        setInterval(uploadToOCR, 200); // 0.2秒間隔
     });
 </script>
 </body>
