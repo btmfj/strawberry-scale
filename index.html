@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>いちご選別くん V1.97</title>
+    <title>いちご選別くん V1.99</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 5px; overflow-y: auto; }
         .container { max-width: 450px; margin: auto; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
@@ -26,7 +26,7 @@
 <body>
 <div id="flash-overlay"></div>
 <div class="container">
-    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.97</h1>
+    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.99</h1>
     <div id="video-container">
         <video id="video" autoplay playsinline muted></video>
         <div id="guide-box"></div>
@@ -60,26 +60,23 @@
     const audioCache = {};
     let audioEnabled = false;
 
-    // 音声オブジェクトの初期化（URLから直接生成）
     function initAudioObjects() {
         audioCache['start'] = new Audio(`${AUDIO_BASE_URL}start.mp3`);
         Object.keys(SIZES).forEach(key => {
             audioCache[key] = new Audio(`${AUDIO_BASE_URL}${key.toLowerCase()}.mp3`);
-            audioCache[key].load(); // 先読み指示
+            audioCache[key].load();
         });
     }
 
     document.body.addEventListener('click', () => {
         if (!audioEnabled) {
-            initAudioObjects(); // タップした瞬間に生成
+            initAudioObjects();
             audioCache['start'].play().then(() => {
                 audioEnabled = true;
-                document.getElementById('debug-log').innerText = "🔊 音声有効 (300ms)";
+                document.getElementById('debug-log').innerText = "🍓 物理フィルタ・高速モード";
                 document.getElementById('debug-log').style.color = "#2ed573";
                 document.getElementById('debug-log').style.borderColor = "#2ed573";
-            }).catch(e => {
-                document.getElementById('debug-log').innerText = "音声エラー: " + e.message;
-            });
+            }).catch(e => { console.log(e); });
         }
     }, { once: true });
 
@@ -96,7 +93,7 @@
 
     let track = null;
     let lastStableWeight = 0;
-    let weightHistory = [];
+    let weightHistory = []; 
     let isProcessing = false;
 
     async function initCamera() {
@@ -159,12 +156,27 @@
     function handleWeight(weight) {
         const type = document.querySelector('input[name="scale_type"]:checked').value;
         weightText.innerText = (type === 'decimal' ? weight.toFixed(1) : Math.floor(weight)) + " g";
+        
+        // --- 物理フィルタ (V1.99) ---
+        // 直前の確定値からの変化量を計算
+        const rawDiff = lastStableWeight - weight;
+
+        // 1. いちごは50g以上増えることはない(秤に置く動作)
+        // 2. 100g以上一気に減ることもない(OCRの誤読の可能性大)
+        // この範囲外の数値が来たら、ノイズとして履歴に入れない
+        if (rawDiff < -60 || rawDiff > 100) {
+            return; 
+        }
+
         weightHistory.push(weight);
-        if (weightHistory.length > 3) weightHistory.shift();
-        if (weightHistory.length === 3 && weightHistory.every(v => v === weightHistory[0])) {
+        if (weightHistory.length > 2) weightHistory.shift(); 
+        
+        if (weightHistory.length === 2 && weightHistory[0] === weightHistory[1]) {
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
-            if (diff >= 5 && diff <= 100) {
+            
+            // 変化量が5g以上60g以下（いちごのサイズ内）なら判定
+            if (diff >= 5 && diff <= 65) {
                 const size = determineSize(diff);
                 if (size) triggerVisualAudio(size);
             }
@@ -188,14 +200,10 @@
         overlay.style.display = 'flex';
         
         if (audioEnabled && audioCache[size]) {
-            // 再生エラーを防ぐため再ロード
             audioCache[size].currentTime = 0;
-            const p = audioCache[size].play();
-            if (p !== undefined) {
-                p.catch(e => { console.log("Play error:", size, e); });
-            }
+            audioCache[size].play().catch(e => {});
         }
-        setTimeout(() => { overlay.style.display = 'none'; }, 1000);
+        setTimeout(() => { overlay.style.display = 'none'; }, 800);
     }
 
     initCamera();
