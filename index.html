@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>イチゴ・スベリー計 V1.80</title>
+    <title>イチゴ・スベリー計 V1.81</title>
     <style>
         body { font-family: 'Arial Black', sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 10px; overflow: hidden; }
         .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
@@ -16,23 +16,26 @@
             box-shadow: 0 0 0 1000px rgba(0,0,0,0.8); pointer-events: none;
         }
 
-        /* フラッシュオーバーレイ */
+        /* 確定時の巨大フラッシュ */
         #flash-overlay {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             display: none; align-items: center; justify-content: center;
             z-index: 1000; font-size: 15rem; font-weight: bold; color: white;
             text-shadow: 10px 10px 0 rgba(0,0,0,0.2);
-            animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            animation: pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
-        @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1); } }
+        @keyframes pop { 0% { transform: scale(0.5); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 
-        .settings-panel { margin: 15px 0; padding: 10px; background: #f1f2f6; border-radius: 12px; }
-        .btn-light { width: 100%; background: #ffa502; border: none; color: white; padding: 10px; border-radius: 8px; font-weight: bold; margin-bottom: 10px; }
-        
+        .settings-panel { margin: 15px 0; padding: 12px; background: #f1f2f6; border-radius: 12px; text-align: left; }
+        .radio-group { display: flex; justify-content: space-around; margin-bottom: 10px; font-weight: bold; }
+        .btn-light { width: 100%; background: #ffa502; border: none; color: white; padding: 12px; border-radius: 8px; font-weight: bold; margin-bottom: 10px; }
+        .btn-light.active { background: #ff4757; }
+
         .monitor-section { margin-top: 10px; padding: 10px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
         canvas { width: 100%; background: #000; border-radius: 5px; }
         
-        #weight-text { font-size: 2rem; font-weight: bold; color: #333; margin-top: 10px; }
+        #weight-text { font-size: 2.2rem; font-weight: bold; color: #333; margin: 10px 0; }
+        #debug-log { font-size: 0.8rem; color: #ff4757; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -40,7 +43,7 @@
 <div id="flash-overlay"></div>
 
 <div class="container">
-    <h1 style="font-size:1.2rem; color:#ff4757; margin-bottom:10px;">🍓 イチゴ・スベリー計 V1.80</h1>
+    <h1 style="font-size:1.2rem; color:#ff4757; margin:0 0 10px 0;">🍓 イチゴ・スベリー計 V1.81</h1>
     
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
@@ -48,33 +51,63 @@
     </div>
 
     <div class="settings-panel">
-        <div style="margin-bottom:10px;">
-            <input type="radio" name="scale_type" value="integer" checked id="r1"> <label for="r1">整数</label>
-            <input type="radio" name="scale_type" value="decimal" id="r2"> <label for="r2">小数</label>
+        <div class="radio-group">
+            <label><input type="radio" name="scale_type" value="integer" checked> 整数秤</label>
+            <label><input type="radio" name="scale_type" value="decimal"> 小数秤</label>
         </div>
-        <button id="light-btn" class="btn-light">🔦 ライト切替</button>
-        <input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.5">
-        <input type="range" id="threshold-slider" min="0" max="255" value="130">
+        <button id="light-btn" class="btn-light">🔦 ライト切替 (要タップ)</button>
+        <div style="font-size:0.8rem; color:#666;">
+            ズーム <input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.5">
+            太さ <input type="range" id="threshold-slider" min="0" max="255" value="130">
+        </div>
     </div>
 
     <div class="monitor-section">
         <canvas id="monitor-canvas"></canvas>
         <div id="weight-text">-- g</div>
-        <div id="debug-log" style="font-size:0.7rem; color:#888;">準備完了</div>
+        <div id="debug-log">画面を一度タップして音声を有効にしてください</div>
     </div>
 </div>
 
 <script>
-    // --- 【重要】GitHubの音声URLをここに設定してください ---
+    // --- 音声設定 ---
     const AUDIO_BASE_URL = "https://raw.githubusercontent.com/btmfj/strawberry-scale/main/";
-    
+    const SIZES = {
+        "4L": { color: "#0984e3" }, // 青
+        "3L": { color: "#d63031" }, // 赤
+        "2L": { color: "#0984e3" }, // 青
+        "L":  { color: "#d63031" }, // 赤
+        "M":  { color: "#0984e3" }, // 青
+        "S":  { color: "#d63031" }  // 赤
+    };
+
+    const audioFiles = {};
+    let audioEnabled = false;
+
+    // 音声を事前ロード（タップ時にロック解除）
+    Object.keys(SIZES).forEach(size => {
+        audioFiles[size] = new Audio(`${AUDIO_BASE_URL}${size.toLowerCase()}.mp3`);
+    });
+
+    // ブラウザの音声制限を解除する儀式
+    document.body.addEventListener('click', () => {
+        if (!audioEnabled) {
+            Object.values(audioFiles).forEach(a => {
+                a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(()=>{});
+            });
+            audioEnabled = true;
+            document.getElementById('debug-log').innerText = "🔊 音声準備完了";
+            document.getElementById('debug-log').style.color = "#2ed573";
+        }
+    }, { once: true });
+
     const API_URL = "https://strawberry-backend-2rxg.onrender.com/ocr";
-    const overlay = document.getElementById('flash-overlay');
-    const weightText = document.getElementById('weight-text');
-    // ... (カメラ・Canvas関連の定数は以前と同様) ...
     const video = document.getElementById('video');
     const monitorCanvas = document.getElementById('monitor-canvas');
     const ctx = monitorCanvas.getContext('2d');
+    const overlay = document.getElementById('flash-overlay');
+    const weightText = document.getElementById('weight-text');
+    const debugLog = document.getElementById('debug-log');
     const thresholdSlider = document.getElementById('threshold-slider');
     const zoomSlider = document.getElementById('zoom-slider');
     const lightBtn = document.getElementById('light-btn');
@@ -84,52 +117,21 @@
     let weightHistory = [];
     let isProcessing = false;
 
-    // サイズ設定（色の定義を含む）
-    const SIZES = {
-        "4L": { color: "#0984e3", bg: "blue" }, // 青バック
-        "3L": { color: "#d63031", bg: "red" },  // 赤バック
-        "2L": { color: "#0984e3", bg: "blue" }, // 青バック
-        "L":  { color: "#d63031", bg: "red" },  // 赤バック
-        "M":  { color: "#0984e3", bg: "blue" }, // 青バック
-        "S":  { color: "#d63031", bg: "red" }   // 赤バック
-    };
-
-    function showFlash(size) {
-        const config = SIZES[size];
-        overlay.innerText = size;
-        overlay.style.backgroundColor = config.color;
-        overlay.style.display = 'flex';
-        
-        // 音声再生
-        const audio = new Audio(`${AUDIO_BASE_URL}${size.toLowerCase()}.mp3`);
-        audio.play().catch(e => console.log("Audio play error:", e));
-
-        // 1.2秒後に消す
-        setTimeout(() => { overlay.style.display = 'none'; }, 1200);
-    }
-
-    function getSize(grams) {
-        if (grams >= 40) return "4L";
-        if (grams >= 31) return "3L";
-        if (grams >= 21) return "2L";
-        if (grams >= 16) return "L";
-        if (grams >= 11) return "M";
-        if (grams >= 6)  return "S";
-        return null;
-    }
-
-    // カメラ初期化
     async function initCamera() {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = stream;
-        track = stream.getVideoTracks()[0];
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = stream;
+            track = stream.getVideoTracks()[0];
+        } catch (err) { debugLog.innerText = "カメラエラー"; }
     }
 
-    // ライト切替
     lightBtn.onclick = async () => {
         if (!track) return;
-        const settings = track.getSettings();
-        await track.applyConstraints({ advanced: [{ torch: !settings.torch }] });
+        try {
+            const settings = track.getSettings();
+            await track.applyConstraints({ advanced: [{ torch: !settings.torch }] });
+            lightBtn.classList.toggle('active');
+        } catch(e) { alert("ライト非対応"); }
     };
 
     function processFrame() {
@@ -162,8 +164,10 @@
             try {
                 const response = await fetch(API_URL, { method: 'POST', body: formData });
                 const data = await response.json();
-                if (data.number !== undefined) handleWeight(data.number);
-            } catch (err) {} finally { isProcessing = false; }
+                if (data.number !== undefined && data.number !== null) {
+                    handleWeight(data.number);
+                }
+            } catch (err) { } finally { isProcessing = false; }
         }, 'image/png');
     }
 
@@ -178,11 +182,36 @@
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
             if (diff >= 5 && diff <= 100) {
-                const size = getSize(diff);
-                if (size) showFlash(size);
+                const size = determineSize(diff);
+                if (size) triggerVisualAudio(size);
             }
             lastStableWeight = stable;
         }
+    }
+
+    function determineSize(grams) {
+        if (grams >= 40) return "4L";
+        if (grams >= 31) return "3L";
+        if (grams >= 21) return "2L";
+        if (grams >= 16) return "L";
+        if (grams >= 11) return "M";
+        if (grams >= 6)  return "S";
+        return null;
+    }
+
+    function triggerVisualAudio(size) {
+        // ビジュアル演出
+        overlay.innerText = size;
+        overlay.style.backgroundColor = SIZES[size].color;
+        overlay.style.display = 'flex';
+        
+        // 音声再生
+        if (audioEnabled && audioFiles[size]) {
+            audioFiles[size].currentTime = 0;
+            audioFiles[size].play().catch(e => console.error(e));
+        }
+
+        setTimeout(() => { overlay.style.display = 'none'; }, 1000);
     }
 
     initCamera();
