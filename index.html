@@ -3,125 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scale OCR - Decimal Enhanced</title>
-    <script src="https://unpkg.com/tesseract.js@v4.1.0/dist/tesseract.min.js"></script>
+    <title>イチゴ・スベリー計 V1.00</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #121212; color: #fff; padding: 20px; margin: 0; }
-        #container { position: relative; display: inline-block; background: #000; border-radius: 8px; overflow: hidden; }
-        video { width: 100%; max-width: 640px; display: block; }
-        #guide {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 280px; height: 100px; border: 3px solid #00ff00; pointer-events: none; z-index: 10;
+        body { font-family: sans-serif; text-align: center; background: #fdf2f4; margin: 0; padding: 20px; }
+        .container { max-width: 500px; margin: auto; background: white; padding: 15px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #e91e63; font-size: 1.5rem; }
+        
+        #video-container { position: relative; width: 100%; max-width: 400px; margin: auto; overflow: hidden; border-radius: 10px; }
+        video { width: 100%; display: block; }
+        /* 秤の数字を囲む緑枠 */
+        #guide-box {
+            position: absolute; top: 50%; left: 50%;
+            width: 60%; height: 30%;
+            border: 3px solid #00ff00;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 0 1000px rgba(0,0,0,0.5); /* 枠外を暗くする */
+            pointer-events: none;
         }
-        .controls { background: #222; padding: 15px; border-radius: 8px; margin: 10px auto; max-width: 500px; text-align: left; }
-        canvas { border: 2px solid #00ff00; margin-top: 10px; width: 280px; height: 100px; image-rendering: pixelated; }
-        #result { font-size: 5rem; font-weight: bold; color: #00ff00; font-family: monospace; margin: 20px 0; }
-        button { background: #e67e22; color: white; border: none; padding: 20px; border-radius: 8px; cursor: pointer; font-size: 1.5rem; width: 100%; font-weight: bold; }
+
+        .monitor-section { margin-top: 20px; padding: 10px; border-top: 2px dashed #ffc107; }
+        canvas { width: 100%; max-width: 200px; border: 1px solid #333; background: #000; }
+        
+        .controls { margin: 20px 0; background: #eee; padding: 15px; border-radius: 10px; }
+        input[type="range"] { width: 80%; }
+        
+        .status-badge { display: inline-block; padding: 5px 10px; border-radius: 5px; background: #333; color: white; font-size: 0.8rem; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
-    <h2>秤OCR（小数点強制認識）</h2>
-    
-    <div id="container">
+<div class="container">
+    <h1>🍓 イチゴ・スベリー計</h1>
+    <div class="status-badge">Version 1.00</div>
+
+    <div id="video-container">
         <video id="video" autoplay playsinline></video>
-        <div id="guide"></div>
+        <div id="guide-box"></div>
     </div>
 
     <div class="controls">
-        <label>しきい値: <span id="thresh-val">128</span></label>
-        <input type="range" id="threshold" min="0" max="255" value="128">
-        <label><input type="checkbox" id="invert"> 白黒反転</label>
-        <button id="capture-btn">数字を読み取る</button>
+        <label>2値化しきい値: <span id="threshold-val">128</span></label><br>
+        <input type="range" id="threshold-slider" min="0" max="255" value="128">
+        <p style="font-size: 0.8rem; color: #666;">※数字がハッキリ白くなるよう調整してください</p>
     </div>
 
-    <p>OCR用画像（ドットを太らせています）:</p>
-    <canvas id="canvas"></canvas>
+    <div class="monitor-section">
+        <h3>現在の読み取りモニター</h3>
+        <canvas id="monitor-canvas"></canvas>
+        <div id="result-display" style="font-size: 2rem; font-weight: bold; color: #e91e63;">-- g</div>
+    </div>
+</div>
 
-    <div id="result">---</div>
+<script>
+    const video = document.getElementById('video');
+    const monitorCanvas = document.getElementById('monitor-canvas');
+    const ctx = monitorCanvas.getContext('2d', { willReadFrequently: true });
+    const thresholdSlider = document.getElementById('threshold-slider');
+    const thresholdVal = document.getElementById('threshold-val');
 
-    <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const resultDiv = document.getElementById('result');
-        const captureBtn = document.getElementById('capture-btn');
-        const threshInput = document.getElementById('threshold');
-        const invertCheck = document.getElementById('invert');
+    // カメラ起動
+    async function initCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, 
+                audio: false 
+            });
+            video.srcObject = stream;
+        } catch (err) {
+            alert("カメラの起動に失敗しました。HTTPS接続か確認してください。");
+        }
+    }
 
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } } }).then(s => video.srcObject = s);
+    // 画像処理（グレースケール＋2値化）
+    function processImage() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            const vW = video.videoWidth;
+            const vH = video.videoHeight;
+            
+            // 枠内のサイズ計算（中央の60%x30%）
+            const cropW = vW * 0.6;
+            const cropH = vH * 0.3;
+            const cropX = (vW - cropW) / 2;
+            const cropY = (vH - cropH) / 2;
 
-        function processFrame() {
-            if (video.paused || video.ended) return;
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            const scaleX = video.videoWidth / video.clientWidth;
-            const scaleY = video.videoHeight / video.clientHeight;
-            const w = 280 * scaleX; const h = 100 * scaleY;
-            const x = (video.videoWidth - w) / 2; const y = (video.videoHeight - h) / 2;
+            monitorCanvas.width = cropW;
+            monitorCanvas.height = cropH;
 
-            canvas.width = 280; canvas.height = 100;
-            ctx.drawImage(video, x, y, w, h, 0, 0, 280, 100);
+            // 元画像をCanvasに描画
+            ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
-            const imageData = ctx.getImageData(0, 0, 280, 100);
+            // ピクセルデータの取得
+            const imageData = ctx.getImageData(0, 0, cropW, cropH);
             const data = imageData.data;
-            const threshold = parseInt(threshInput.value);
-            const isInverted = invertCheck.checked;
+            const threshold = parseInt(thresholdSlider.value);
 
-            // 1. 二値化
-            let binary = new Uint8Array(280 * 100);
             for (let i = 0; i < data.length; i += 4) {
+                // 輝度計算 (簡易版)
                 const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                let val = avg >= threshold ? 255 : 0;
-                if (isInverted) val = 255 - val;
-                binary[i / 4] = val;
+                // しきい値より明るければ白、暗ければ黒
+                const val = avg >= threshold ? 255 : 0;
+                data[i] = data[i+1] = data[i+2] = val;
             }
-
-            // 2. 簡易的な膨張処理（Dilation）: ドットを太らせる
-            const output = ctx.createImageData(280, 100);
-            for (let y = 1; y < 99; y++) {
-                for (let x = 1; x < 279; x++) {
-                    const idx = y * 280 + x;
-                    // 周囲1ピクセルに「黒」があれば自分も「黒」にする（文字が黒の場合）
-                    // ここではOCRエンジン用に「白背景・黒文字」を前提とします
-                    let minVal = binary[idx];
-                    if (binary[idx-1] === 0 || binary[idx+1] === 0 || binary[idx-280] === 0 || binary[idx+280] === 0) {
-                        minVal = 0;
-                    }
-                    const outIdx = idx * 4;
-                    output.data[outIdx] = output.data[outIdx+1] = output.data[outIdx+2] = minVal;
-                    output.data[outIdx+3] = 255;
-                }
-            }
-            ctx.putImageData(output, 0, 0);
-            document.getElementById('thresh-val').innerText = threshold;
-            requestAnimationFrame(processFrame);
+            ctx.putImageData(imageData, 0, 0);
         }
-        video.addEventListener('play', processFrame);
+        requestAnimationFrame(processImage);
+    }
 
-        let worker = null;
-        async function getOCR() {
-            if (!worker) {
-                worker = await Tesseract.createWorker();
-                await worker.loadLanguage('eng');
-                await worker.initialize('eng');
-                await worker.setParameters({
-                    tessedit_char_whitelist: '0123456789.',
-                    tessedit_pageseg_mode: '7',
-                    // 小数点の認識感度を上げるための内部設定
-                    tessedit_create_boxfile: '1',
-                });
-            }
-            return worker;
-        }
+    thresholdSlider.oninput = () => { thresholdVal.innerText = thresholdSlider.value; };
 
-        captureBtn.addEventListener('click', async () => {
-            captureBtn.disabled = true;
-            resultDiv.innerText = "...";
-            const currentWorker = await getOCR();
-            const { data: { text } } = await currentWorker.recognize(canvas);
-            const cleanText = text.replace(/[^0-9.]/g, '').trim();
-            resultDiv.innerText = cleanText || "Error";
-            captureBtn.disabled = false;
-        });
-    </script>
+    initCamera();
+    video.addEventListener('play', () => {
+        processImage();
+        // ここで0.1秒ごとのAPI送信タイマーを後ほど実装します
+    });
+</script>
+
 </body>
 </html>
