@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>イチゴ・スベリー計 V1.20</title>
+    <title>イチゴ・スベリー計 V1.21</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 20px; color: #333; }
         .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
         h1 { color: #ff4757; font-size: 1.8rem; margin-bottom: 5px; }
         .version { font-size: 0.8rem; color: #999; margin-bottom: 15px; }
         
-        /* カメラ・ガイド枠 */
         #video-container { position: relative; width: 100%; aspect-ratio: 4/3; margin: auto; overflow: hidden; border-radius: 15px; background: #000; }
         video { width: 100%; height: 100%; object-fit: cover; }
         #guide-box {
@@ -23,28 +22,26 @@
             pointer-events: none;
         }
 
-        /* コントロールパネル */
         .controls { margin: 20px 0; background: #f1f2f6; padding: 15px; border-radius: 12px; }
         input[type="range"] { width: 90%; height: 10px; cursor: pointer; }
         .threshold-label { font-weight: bold; color: #57606f; display: block; margin-bottom: 8px; }
 
-        /* モニターセクション */
         .monitor-section { margin-top: 20px; padding: 15px; border: 2px solid #ffa502; border-radius: 15px; background: #fffcf0; }
         canvas { width: 100%; max-width: 250px; border: 2px solid #333; background: #000; border-radius: 5px; }
         
-        /* 結果表示 */
         #result-area { margin-top: 15px; min-height: 100px; }
         #weight-display { font-size: 1.2rem; color: #747d8c; }
         #size-display { font-size: 4.5rem; font-weight: bold; color: #ff4757; line-height: 1; margin: 10px 0; }
         
-        .api-status { font-size: 0.7rem; margin-top: 10px; color: #2ed573; }
+        /* デバッグ用ステータス表示を強化 */
+        .api-status { font-size: 0.8rem; margin-top: 10px; padding: 8px; border-radius: 5px; background: #eee; min-height: 1.2em; word-break: break-all; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h1>🍓 イチゴ・スベリー計</h1>
-    <div class="version">Version 1.20</div>
+    <div class="version">Version 1.21 (Debug Mode)</div>
 
     <div id="video-container">
         <video id="video" autoplay playsinline></video>
@@ -63,15 +60,14 @@
         <div id="result-area">
             <div id="weight-display">現在: -- g</div>
             <div id="size-display">--</div>
-            <div id="api-indicator" class="api-status">● サーバー待機中...</div>
+            <div id="api-indicator" class="api-status">準備中...</div>
         </div>
     </div>
 </div>
 
 <script>
-    // --- 基本設定 ---
     const API_URL = "https://strawberry-backend-2rxg.onrender.com/ocr";
-    const STABILITY_COUNT = 3; // 3回連続一致で確定
+    const STABILITY_COUNT = 3;
     
     const video = document.getElementById('video');
     const monitorCanvas = document.getElementById('monitor-canvas');
@@ -84,7 +80,6 @@
     let weightHistory = [];
     let isProcessing = false;
 
-    // サイズ判定ロジック
     function getSize(grams) {
         if (grams >= 40) return "4L";
         if (grams >= 30) return "3L";
@@ -95,7 +90,6 @@
         return null;
     }
 
-    // カメラ初期化
     async function initCamera() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -103,18 +97,16 @@
                 audio: false 
             });
             video.srcObject = stream;
+            apiIndicator.innerText = "● サーバー起動を待っています...";
         } catch (err) {
-            alert("カメラを起動できません。HTTPS環境かつ許可設定を確認してください。");
+            apiIndicator.innerText = "❌ カメラエラー: " + err.name;
         }
     }
 
-    // 映像処理 loop
     function processFrame() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             const vW = video.videoWidth;
             const vH = video.videoHeight;
-            
-            // 枠内切り出し (中央の70%x25%)
             const cropW = vW * 0.7;
             const cropH = vH * 0.25;
             const cropX = (vW - cropW) / 2;
@@ -123,7 +115,6 @@
             monitorCanvas.width = cropW;
             monitorCanvas.height = cropH;
 
-            // 描画と2値化
             ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
             const imageData = ctx.getImageData(0, 0, cropW, cropH);
             const data = imageData.data;
@@ -139,31 +130,42 @@
         requestAnimationFrame(processFrame);
     }
 
-    // API送信
+    // --- API送信処理 (V1.21 強化版) ---
     async function uploadToOCR() {
         if (isProcessing || video.paused) return;
         isProcessing = true;
-        apiIndicator.innerText = "● 送信中...";
-        apiIndicator.style.color = "#ffa502";
 
         monitorCanvas.toBlob(async (blob) => {
             const formData = new FormData();
             formData.append('file', blob, 'digit.png');
 
             try {
-                const response = await fetch(API_URL, { method: 'POST', body: formData });
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000); // 8秒タイムアウト
+
+                const response = await fetch(API_URL, { 
+                    method: 'POST', 
+                    body: formData,
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
                 const data = await response.json();
                 
-                if (data.number) {
-                    apiIndicator.innerText = "● 接続中";
+                if (data.number !== undefined && data.number !== null) {
+                    apiIndicator.innerText = "● 接続中 (受信: " + data.number + ")";
                     apiIndicator.style.color = "#2ed573";
                     handleWeightResult(parseFloat(data.number));
                 } else {
-                    apiIndicator.innerText = "● 読取不能";
-                    apiIndicator.style.color = "#ff4757";
+                    apiIndicator.innerText = "● 認識エラー: 数字が見つかりません";
+                    apiIndicator.style.color = "#ffa502";
                 }
             } catch (err) {
-                apiIndicator.innerText = "● サーバーエラー";
+                if (err.name === 'AbortError') {
+                    apiIndicator.innerText = "● タイムアウト (サーバー起動中かもしれません)";
+                } else {
+                    apiIndicator.innerText = "● 通信失敗: " + err.message;
+                }
                 apiIndicator.style.color = "#ff4757";
             } finally {
                 isProcessing = false;
@@ -171,7 +173,6 @@
         }, 'image/png');
     }
 
-    // 重量判定
     function handleWeightResult(currentWeight) {
         if (isNaN(currentWeight)) return;
         document.getElementById('weight-display').innerText = `現在: ${currentWeight.toFixed(1)} g`;
@@ -186,7 +187,6 @@
             const stableWeight = weightHistory[0];
             const diff = lastStableWeight - stableWeight;
 
-            // イチゴが取り出された（5g以上減った）時
             if (diff >= 5) {
                 const size = getSize(diff);
                 if (size) {
@@ -198,23 +198,21 @@
         }
     }
 
-    // 音声読み上げ
     function speakSize(text) {
         const uttr = new SpeechSynthesisUtterance(text);
         uttr.lang = 'ja-JP';
-        uttr.rate = 1.2; // 少し早口でレスポンス感アップ
+        uttr.rate = 1.2;
         window.speechSynthesis.speak(uttr);
     }
 
-    // イベント設定
     thresholdSlider.oninput = () => { thresholdVal.innerText = thresholdSlider.value; };
     
     initCamera();
     video.addEventListener('play', () => {
         processFrame();
-        setInterval(uploadToOCR, 100); // 0.1秒おきにOCR
+        // サーバー負荷を抑えるため最初は1秒おきに、徐々に0.1秒へ（デバッグ用）
+        setInterval(uploadToOCR, 500); 
     });
-
 </script>
 </body>
 </html>
