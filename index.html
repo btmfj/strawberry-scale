@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>いちご選別くん V1.99</title>
+    <title>いちご選別くん V2.05</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #fff5f7; margin: 0; padding: 5px; overflow-y: auto; }
         .container { max-width: 450px; margin: auto; background: white; padding: 10px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
@@ -26,7 +26,7 @@
 <body>
 <div id="flash-overlay"></div>
 <div class="container">
-    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V1.99</h1>
+    <h1 style="font-size:1.1rem; color:#ff4757; margin:5px 0;">🍓 いちご選別くん V2.05</h1>
     <div id="video-container">
         <video id="video" autoplay playsinline muted></video>
         <div id="guide-box"></div>
@@ -39,7 +39,8 @@
         <button id="light-btn" class="btn-light">🔦 ライト ON/OFF</button>
         <div class="slider-row">
             <span>🔍</span><input type="range" id="zoom-slider" min="1" max="3" step="0.1" value="1.6">
-            <span>🌓</span><input type="range" id="threshold-slider" min="0" max="255" value="130">
+            <span>🌓</span><input type="range" id="sensitivity-slider" min="1" max="50" value="15">
+            <small>感度</small>
         </div>
     </div>
     <div class="monitor-section">
@@ -51,16 +52,11 @@
 
 <script>
     const AUDIO_BASE_URL = "https://raw.githubusercontent.com/btmfj/strawberry-scale/main/";
-    const SIZES = {
-        "4L": { color: "#0984e3" }, "3L": { color: "#d63031" },
-        "2L": { color: "#0984e3" }, "L":  { color: "#d63031" },
-        "M":  { color: "#0984e3" }, "S":  { color: "#d63031" }
-    };
-
+    const SIZES = { "4L": "#0984e3", "3L": "#d63031", "2L": "#0984e3", "L": "#d63031", "M": "#0984e3", "S": "#d63031" };
     const audioCache = {};
     let audioEnabled = false;
 
-    function initAudioObjects() {
+    function initAudio() {
         audioCache['start'] = new Audio(`${AUDIO_BASE_URL}start.mp3`);
         Object.keys(SIZES).forEach(key => {
             audioCache[key] = new Audio(`${AUDIO_BASE_URL}${key.toLowerCase()}.mp3`);
@@ -70,13 +66,13 @@
 
     document.body.addEventListener('click', () => {
         if (!audioEnabled) {
-            initAudioObjects();
+            initAudio();
             audioCache['start'].play().then(() => {
                 audioEnabled = true;
-                document.getElementById('debug-log').innerText = "🍓 物理フィルタ・高速モード";
+                document.getElementById('debug-log').innerText = "🌓 適応型ビジョン作動中";
                 document.getElementById('debug-log').style.color = "#2ed573";
                 document.getElementById('debug-log').style.borderColor = "#2ed573";
-            }).catch(e => { console.log(e); });
+            });
         }
     }, { once: true });
 
@@ -84,12 +80,12 @@
     const video = document.getElementById('video');
     const monitorCanvas = document.getElementById('monitor-canvas');
     const ctx = monitorCanvas.getContext('2d');
-    const overlay = document.getElementById('flash-overlay');
     const weightText = document.getElementById('weight-text');
     const debugLog = document.getElementById('debug-log');
-    const thresholdSlider = document.getElementById('threshold-slider');
+    const sensitivitySlider = document.getElementById('sensitivity-slider');
     const zoomSlider = document.getElementById('zoom-slider');
     const lightBtn = document.getElementById('light-btn');
+    const overlay = document.getElementById('flash-overlay');
 
     let track = null;
     let lastStableWeight = 0;
@@ -99,7 +95,7 @@
     async function initCamera() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
+                video: { facingMode: "environment", width: { ideal: 1280 } } 
             });
             video.srcObject = stream;
             track = stream.getVideoTracks()[0];
@@ -112,8 +108,51 @@
             const settings = track.getSettings();
             await track.applyConstraints({ advanced: [{ torch: !settings.torch }] });
             lightBtn.classList.toggle('active');
-        } catch(e) { alert("ライト非対応"); }
+        } catch(e) { }
     };
+
+    // --- 高速・適応型二値化アルゴリズム ---
+    function applyAdaptiveThreshold(ctx, width, height, sensitivity) {
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        const grayscale = new Uint8ClampedArray(width * height);
+
+        // 1. グレースケール化
+        for (let i = 0; i < data.length; i += 4) {
+            grayscale[i / 4] = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+        }
+
+        // 2. 積分画像を作成 (高速範囲平均計算のため)
+        const integral = new Int32Array((width + 1) * (height + 1));
+        for (let y = 0; y < height; y++) {
+            let rowSum = 0;
+            for (let x = 0; x < width; x++) {
+                rowSum += grayscale[y * width + x];
+                integral[(y + 1) * (width + 1) + (x + 1)] = integral[y * (width + 1) + (x + 1)] + rowSum;
+            }
+        }
+
+        // 3. 適応型二値化の実行 (半径 S の平均と比較)
+        const S = Math.floor(width / 8); // 周囲をチェックする範囲
+        const T = sensitivity; // 感度 (平均よりどれだけ暗ければ黒にするか)
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const x1 = Math.max(1, x - S), x2 = Math.min(width, x + S);
+                const y1 = Math.max(1, y - S), y2 = Math.min(height, y + S);
+                const count = (x2 - x1) * (y2 - y1);
+                const sum = integral[y2 * (width + 1) + x2] - integral[y1 * (width + 1) + x2] - integral[y2 * (width + 1) + x1] + integral[y1 * (width + 1) + x1];
+
+                const idx = (y * width + x) * 4;
+                const pixel = grayscale[y * width + x];
+                
+                // 平均より T% 以上暗ければ黒（数字）
+                const val = (pixel * count) < (sum * (100 - T) / 100) ? 0 : 255;
+                data[idx] = data[idx+1] = data[idx+2] = val;
+            }
+        }
+        ctx.putImageData(imageData, 0, 0);
+    }
 
     function processFrame() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
@@ -123,13 +162,9 @@
             const cropX = (vW - cropW) / 2; const cropY = (vH - cropH) / 2;
             monitorCanvas.width = cropW; monitorCanvas.height = cropH;
             ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-            const imageData = ctx.getImageData(0, 0, cropW, cropH);
-            const data = imageData.data; const th = parseInt(thresholdSlider.value);
-            for (let i = 0; i < data.length; i += 4) {
-                const b = (data[i] + data[i+1] + data[i+2]) / 3;
-                const v = b >= th ? 255 : 0; data[i] = data[i+1] = data[i+2] = v;
-            }
-            ctx.putImageData(imageData, 0, 0);
+            
+            // 適応型二値化を適用
+            applyAdaptiveThreshold(ctx, cropW, cropH, parseInt(sensitivitySlider.value));
         }
         requestAnimationFrame(processFrame);
     }
@@ -137,45 +172,29 @@
     async function uploadToOCR() {
         if (isProcessing || video.paused || !video.srcObject) return;
         isProcessing = true;
-        const scaleType = document.querySelector('input[name="scale_type"]:checked').value;
         monitorCanvas.toBlob(async (blob) => {
-            if (!blob) { isProcessing = false; return; }
+            const scaleType = document.querySelector('input[name="scale_type"]:checked').value;
             const formData = new FormData();
             formData.append('file', blob, 'digit.jpg');
             formData.append('scale_type', scaleType);
             try {
                 const response = await fetch(API_URL, { method: 'POST', body: formData });
                 const data = await response.json();
-                if (data.number !== undefined && data.number !== null) {
-                    handleWeight(data.number);
-                }
+                if (data.number !== undefined && data.number !== null) handleWeight(data.number);
             } catch (err) { } finally { isProcessing = false; }
-        }, 'image/jpeg', 0.8); 
+        }, 'image/jpeg', 0.8);
     }
 
     function handleWeight(weight) {
         const type = document.querySelector('input[name="scale_type"]:checked').value;
         weightText.innerText = (type === 'decimal' ? weight.toFixed(1) : Math.floor(weight)) + " g";
-        
-        // --- 物理フィルタ (V1.99) ---
-        // 直前の確定値からの変化量を計算
         const rawDiff = lastStableWeight - weight;
-
-        // 1. いちごは50g以上増えることはない(秤に置く動作)
-        // 2. 100g以上一気に減ることもない(OCRの誤読の可能性大)
-        // この範囲外の数値が来たら、ノイズとして履歴に入れない
-        if (rawDiff < -60 || rawDiff > 100) {
-            return; 
-        }
-
+        if (rawDiff < -60 || rawDiff > 100) return;
         weightHistory.push(weight);
         if (weightHistory.length > 2) weightHistory.shift(); 
-        
         if (weightHistory.length === 2 && weightHistory[0] === weightHistory[1]) {
             const stable = weightHistory[0];
             const diff = lastStableWeight - stable;
-            
-            // 変化量が5g以上60g以下（いちごのサイズ内）なら判定
             if (diff >= 5 && diff <= 65) {
                 const size = determineSize(diff);
                 if (size) triggerVisualAudio(size);
@@ -185,32 +204,23 @@
     }
 
     function determineSize(grams) {
-        if (grams >= 40) return "4L";
-        if (grams >= 31) return "3L";
-        if (grams >= 21) return "2L";
-        if (grams >= 16) return "L";
-        if (grams >= 11) return "M";
-        if (grams >= 6)  return "S";
+        if (grams >= 40) return "4L"; if (grams >= 31) return "3L";
+        if (grams >= 21) return "2L"; if (grams >= 16) return "L";
+        if (grams >= 11) return "M";  if (grams >= 6)  return "S";
         return null;
     }
 
     function triggerVisualAudio(size) {
-        overlay.innerText = size;
-        overlay.style.backgroundColor = SIZES[size].color;
+        overlay.innerText = size; overlay.style.backgroundColor = SIZES[size];
         overlay.style.display = 'flex';
-        
         if (audioEnabled && audioCache[size]) {
-            audioCache[size].currentTime = 0;
-            audioCache[size].play().catch(e => {});
+            audioCache[size].currentTime = 0; audioCache[size].play().catch(e=>{});
         }
-        setTimeout(() => { overlay.style.display = 'none'; }, 800);
+        setTimeout(() => { overlay.style.display = 'none'; }, 700);
     }
 
     initCamera();
-    video.addEventListener('play', () => { 
-        processFrame(); 
-        setInterval(uploadToOCR, 300); 
-    });
+    video.addEventListener('play', () => { processFrame(); setInterval(uploadToOCR, 200); });
 </script>
 </body>
 </html>
